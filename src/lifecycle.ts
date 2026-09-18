@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { controlEndpoint } from './control-endpoint.js';
 import { ensureControlSecret, getControlSecret } from './security.js';
+import { ensureRelayConfigured } from './relay-config.js';
 
 export const stateDir=resolve(homedir(),'.localmcp');
 export const logFile=resolve(stateDir,'agent.log');
@@ -261,6 +262,7 @@ export async function control(
       let child:ReturnType<typeof spawn>|undefined;
 
       if(current.status==='stopped'){
+        await ensureRelayConfigured();
         await initialize();
 
         if(endpoint.socketFile){

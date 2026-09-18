@@ -6,6 +6,11 @@ import { config, configFilePath } from './config.js';
 import { auditFile, auditSecurity, secureWriteFileAtomic } from './security.js';
 import { control, maskMcpUrl, request, status } from './lifecycle.js';
 import { DEFAULT_PUBLIC_WORKER_URL, validatedWorkerOrigin } from './relay.js';
+import {
+  relaySetupState,
+  savePendingRegistrationToken,
+  saveRelayPreference
+} from './relay-config.js';
 
 const UI_HOST='127.0.0.1';
 const SESSION_COOKIE='localmcp_ui_session';
@@ -201,6 +206,7 @@ function capabilityAvailability(enabled:boolean,privileged:boolean,current:Await
 
 async function statusView(){
   const current=await status();
+  const relay=await relaySetupState();
   const configuration=await configView();
   const effective=configuration.effectiveFeatures;
   const capabilityMeta:{key:keyof FeatureState;privileged:boolean}[]=[
@@ -211,6 +217,10 @@ async function statusView(){
     {key:'processes',privileged:true},
     {key:'externalMcp',privileged:true}
   ];
+  const activeWorkerUrl=current.workerUrl??workerOrigin(current.url);
+  const relayConfigured=current.status==='running'||relay.configured;
+  const configuredWorkerUrl=activeWorkerUrl??relay.workerUrl;
+  const suggestedWorkerUrl=configuredWorkerUrl??relay.suggestedWorkerUrl;
 
   return {
     agent:{
@@ -223,10 +233,15 @@ async function statusView(){
     },
     connection:{
       state:current.status==='running'?(current.ready?'connected':'connecting'):'stopped',
-      workerUrl:current.workerUrl??workerOrigin(current.url),
+      configured:relayConfigured,
+      needsSetup:!relayConfigured,
+      workerUrl:configuredWorkerUrl,
+      suggestedWorkerUrl,
+      relaySource:relay.source,
       deviceId:current.deviceId,
-      workerManagedByEnv:current.workerManagedByEnv,
-      publicRelay:(current.workerUrl??workerOrigin(current.url))===validatedWorkerOrigin(DEFAULT_PUBLIC_WORKER_URL).href,
+      workerManagedByEnv:relay.managedByEnv||current.workerManagedByEnv,
+      registrationTokenManagedByEnv:relay.registrationTokenManagedByEnv,
+      publicRelay:suggestedWorkerUrl===validatedWorkerOrigin(DEFAULT_PUBLIC_WORKER_URL).href,
       mcpUrlMasked:maskMcpUrl(current.url)
     },
     capabilities:capabilityMeta.map(({key,privileged})=>({
@@ -416,6 +431,33 @@ function parseWorkerOrigin(body:JsonObject){
   return validatedWorkerOrigin(value).href;
 }
 
+function parseRegistrationToken(body:JsonObject){
+  if(body.registrationToken===undefined)return undefined;
+  if(typeof body.registrationToken!=='string'){
+    throw new Error('registrationToken must be a string');
+  }
+  if(body.registrationToken.length>8192){
+    throw new Error('registrationToken is too long');
+  }
+  return body.registrationToken;
+}
+
+async function configureRelay(body:JsonObject){
+  if(body.confirm!==true){
+    throw new Error('Relay configuration requires explicit confirmation');
+  }
+
+  const workerUrl=parseWorkerOrigin(body);
+  const registrationToken=parseRegistrationToken(body);
+  await savePendingRegistrationToken(registrationToken);
+  const savedWorkerUrl=await saveRelayPreference(workerUrl);
+  await auditSecurity('relay_config_update',{
+    changed:'relay',
+    publicRelay:savedWorkerUrl===validatedWorkerOrigin(DEFAULT_PUBLIC_WORKER_URL).href
+  });
+  return savedWorkerUrl;
+}
+
 function safeAuditValue(value:unknown){
   if(value===null||typeof value==='number'||typeof value==='boolean')return value;
   if(typeof value!=='string')return undefined;
@@ -508,7 +550,7 @@ header{display:flex;justify-content:space-between;gap:20px;align-items:flex-star
 .muted{font-size:12px;color:#7b8697}.path{font:12px ui-monospace,SFMono-Regular,Consolas,monospace;color:#475467;word-break:break-all}
 .warning{margin-top:12px;padding:11px 12px;border-radius:10px;background:#fff4e5;color:#7a4b00;font-size:13px;font-weight:600}
 table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:9px 8px;border-bottom:1px solid #edf0f4;vertical-align:middle}th{font-size:12px;color:#667085}
-input[type="text"],select{width:100%;border:1px solid #cfd6e2;border-radius:8px;padding:8px 9px;background:#fff;color:#182230}input[type="checkbox"],input[type="radio"]{width:17px;height:17px}
+input[type="text"],input[type="password"],select{width:100%;border:1px solid #cfd6e2;border-radius:8px;padding:8px 9px;background:#fff;color:#182230}input[type="checkbox"],input[type="radio"]{width:17px;height:17px}
 .cap-name{font-weight:700}.cap-note{display:block;font-size:11px;color:#7b8697;margin-top:2px}.workspace-actions{display:flex;gap:6px;align-items:center}.connection-editor{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:12px}
 .audit-tools{display:grid;grid-template-columns:180px 1fr auto auto;gap:8px;align-items:center;margin-bottom:10px}.pager{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap}.pager-controls{display:flex;gap:8px;align-items:center}
 #revealed{margin-top:9px;font:12px ui-monospace,SFMono-Regular,Consolas,monospace}#message{position:fixed;right:20px;bottom:20px;max-width:460px;padding:11px 14px;background:#172b4d;color:#fff;border-radius:10px;display:none;white-space:pre-wrap;z-index:10}
@@ -522,6 +564,16 @@ input[type="text"],select{width:100%;border:1px solid #cfd6e2;border-radius:8px;
   <div><h1>LocalMCP Control Center</h1><p>Local-only administration over the existing authenticated control plane.</p></div>
   <div class="header-actions"><button id="refreshStatus">Refresh</button><span id="securityBadge" class="badge">Connecting…</span></div>
 </header>
+
+<section id="firstRunSetup" class="card wide" hidden style="margin-bottom:16px">
+<h2>Choose a Relay before starting LocalMCP</h2>
+<p>The Agent will not start until you explicitly save a Relay. The public Relay is prefilled for convenience, but it is not contacted until you confirm.</p>
+<div class="connection-editor"><input id="setupWorkerInput" type="text" aria-label="Relay origin" placeholder="https://worker.example.com"><button id="setupUseDefault">Use public relay</button></div>
+<div style="margin-top:8px"><input id="setupTokenInput" type="password" aria-label="Registration token" placeholder="Registration token (optional for protected custom Relay)"></div>
+<p id="setupTokenHint" class="muted">The registration token is stored only until registration succeeds, then deleted.</p>
+<div class="warning">The public Relay is shared trusted infrastructure and is not end-to-end encrypted. For company source code, internal systems, or sensitive data, use a self-hosted Relay.</div>
+<div class="actions"><button id="setupStart" class="primary">Save & Start Agent</button></div>
+</section>
 
 <div class="summary">
   <div class="metric"><div class="metric-label">Agent</div><div id="summaryAgent" class="metric-value">-</div></div>
@@ -555,6 +607,7 @@ input[type="text"],select{width:100%;border:1px solid #cfd6e2;border-radius:8px;
 <div class="row"><span class="label">Device</span><span id="deviceId" class="value">-</span></div>
 <div class="row"><span class="label">MCP URL</span><span id="maskedUrl" class="value">-</span></div>
 <div class="connection-editor"><input id="workerInput" type="text" aria-label="Worker origin" placeholder="https://worker.example.com"><button id="useDefaultWorker">Use public relay</button></div>
+<div style="margin-top:8px"><input id="workerTokenInput" type="password" aria-label="Registration token" placeholder="Registration token (optional for protected custom Relay)"></div>
 <p id="workerHint" class="muted">Changing Worker re-registers this device. Registration credentials remain inside the Agent.</p>
 <div class="actions"><button id="reregisterWorker">Re-register Worker</button><button id="reveal">Reveal / Copy MCP URL</button><button id="rotate" class="danger">Rotate credentials</button></div>
 <input id="revealed" type="text" readonly hidden aria-label="Revealed MCP URL">
@@ -607,6 +660,8 @@ input[type="text"],select{width:100%;border:1px solid #cfd6e2;border-radius:8px;
   let auditEvents=[];
   let auditPage=1;
   let workerManagedByEnv=false;
+  let registrationTokenManagedByEnv=false;
+  let relayConfigured=false;
   const DEFAULT_WORKER='https://localmcp-relay.daodao973597.workers.dev';
   const $=id=>document.getElementById(id);
   const message=(value,error=false)=>{
@@ -668,6 +723,20 @@ input[type="text"],select{width:100%;border:1px solid #cfd6e2;border-radius:8px;
   const load=async()=>{
     const data=await api('/api/status');
     const running=data.agent.status==='running';
+    workerManagedByEnv=!!data.connection.workerManagedByEnv;
+    registrationTokenManagedByEnv=!!data.connection.registrationTokenManagedByEnv;
+    relayConfigured=!!data.connection.configured;
+    const needsSetup=!!data.connection.needsSetup;
+    $('firstRunSetup').hidden=!needsSetup;
+    document.querySelector('.summary').hidden=needsSetup;
+    document.querySelector('.grid').hidden=needsSetup;
+    $('setupWorkerInput').value=data.connection.suggestedWorkerUrl??DEFAULT_WORKER;
+    $('setupWorkerInput').disabled=workerManagedByEnv;
+    $('setupUseDefault').disabled=workerManagedByEnv;
+    $('setupTokenInput').disabled=registrationTokenManagedByEnv;
+    $('setupTokenHint').textContent=registrationTokenManagedByEnv
+      ? 'Registration token is controlled by LOCALMCP_REGISTRATION_TOKEN.'
+      : 'The registration token is stored only until registration succeeds, then deleted.';
     $('agentStatus').textContent=data.agent.status+(data.agent.ready?' / ready':running?' / connecting':'');
     $('pid').textContent=data.agent.pid??'-';
     $('expiry').textContent=data.agent.unlockExpiresAt??'-';
@@ -675,7 +744,7 @@ input[type="text"],select{width:100%;border:1px solid #cfd6e2;border-radius:8px;
     $('securityBadge').textContent=data.agent.locked?'LOCKED':'UNLOCKED';
     $('securityBadge').className='badge '+(data.agent.locked?'warn':'ok');
     $('summaryAgent').textContent=data.agent.ready?'Running / ready':running?'Running / connecting':'Stopped';
-    $('summaryRelay').textContent=data.connection.state;
+    $('summaryRelay').textContent=needsSetup?'Setup required':data.connection.state;
     $('summarySecurity').textContent=data.agent.locked?'LOCKED':'UNLOCKED';
     $('summaryWorkspace').textContent=data.configuration.defaultWorkspace;
     $('relayState').textContent=data.connection.state;
@@ -683,15 +752,16 @@ input[type="text"],select{width:100%;border:1px solid #cfd6e2;border-radius:8px;
     $('deviceId').textContent=data.connection.deviceId??'legacy / unavailable';
     $('maskedUrl').textContent=data.connection.mcpUrlMasked??'-';
     $('configPath').textContent=data.configuration.path;
-    workerManagedByEnv=!!data.connection.workerManagedByEnv;
-    $('workerInput').value=data.connection.workerUrl??'';
+    $('workerInput').value=data.connection.suggestedWorkerUrl??DEFAULT_WORKER;
     $('workerInput').disabled=workerManagedByEnv;
-    $('reregisterWorker').disabled=workerManagedByEnv||!running;
+    $('workerTokenInput').disabled=registrationTokenManagedByEnv;
+    $('reregisterWorker').disabled=workerManagedByEnv;
+    $('reregisterWorker').textContent=running?'Re-register Worker':'Save Relay';
     $('useDefaultWorker').disabled=workerManagedByEnv;
     $('workerHint').textContent=workerManagedByEnv
       ? 'Worker origin is controlled by LOCALMCP_WORKER_URL. Remove the environment override before changing it here.'
-      : (data.connection.publicRelay?'Using the default public relay. It is trusted infrastructure, not end-to-end encrypted.':'Custom Worker origin. Re-registering replaces device credentials for this Agent.');
-    $('agentStart').disabled=running;
+      : (data.connection.publicRelay?'Using the public relay. It is trusted infrastructure, not end-to-end encrypted.':running?'Custom Worker origin. Re-registering replaces device credentials for this Agent.':'Relay changes are saved now and used the next time the Agent starts.');
+    $('agentStart').disabled=running||!relayConfigured;
     $('agentStop').disabled=!running;
     $('agentRestart').disabled=!running;
     $('lock').disabled=!running;
@@ -746,6 +816,23 @@ input[type="text"],select{width:100%;border:1px solid #cfd6e2;border-radius:8px;
     try{await api('/api/agent/'+action,{confirm:action==='start'||action==='stop'||action==='restart'});await load();message('Agent '+action+' completed.');}
     catch(error){message(error.message,true);}
   };
+  $('setupUseDefault').addEventListener('click',()=>{$('setupWorkerInput').value=DEFAULT_WORKER;});
+  $('setupStart').addEventListener('click',async()=>{
+    if(workerManagedByEnv)return;
+    const workerUrl=$('setupWorkerInput').value.trim();
+    const registrationToken=registrationTokenManagedByEnv?undefined:$('setupTokenInput').value;
+    if(!confirm('Save this Relay and start the LocalMCP Agent?\n\n'+workerUrl))return;
+    try{
+      await api('/api/relay/configure',{workerUrl,registrationToken,start:true,confirm:true});
+      $('setupTokenInput').value='';
+      await load();
+      await loadAudit();
+      message('Relay saved and Agent started.');
+    }catch(error){
+      await load().catch(()=>{});
+      message(error.message,true);
+    }
+  });
   $('agentStart').addEventListener('click',()=>agentAction('start'));
   $('agentStop').addEventListener('click',()=>agentAction('stop'));
   $('agentRestart').addEventListener('click',()=>agentAction('restart'));
@@ -766,8 +853,15 @@ input[type="text"],select{width:100%;border:1px solid #cfd6e2;border-radius:8px;
   $('reregisterWorker').addEventListener('click',async()=>{
     if(workerManagedByEnv)return;
     const workerUrl=$('workerInput').value.trim();
-    if(!confirm('Re-register this LocalMCP device with '+workerUrl+'? Local credentials will switch to the new Worker. The previous Worker registration may remain valid until it is revoked or rotated there.'))return;
-    try{await api('/api/worker/reregister',{workerUrl,confirm:true});await load();message('Worker re-registration completed.');}catch(error){message(error.message,true);}
+    const registrationToken=registrationTokenManagedByEnv?undefined:$('workerTokenInput').value;
+    const running=$('agentStatus').textContent.startsWith('running');
+    if(running){
+      if(!confirm('Re-register this LocalMCP device with '+workerUrl+'? Local credentials will switch to the new Worker. The previous Worker registration may remain valid until it is revoked or rotated there.'))return;
+      try{await api('/api/worker/reregister',{workerUrl,registrationToken,confirm:true});$('workerTokenInput').value='';await load();message('Worker re-registration completed.');}catch(error){message(error.message,true);}
+    }else{
+      if(!confirm('Save this Relay for the next Agent start?\n\n'+workerUrl))return;
+      try{await api('/api/relay/configure',{workerUrl,registrationToken,start:false,confirm:true});$('workerTokenInput').value='';await load();message('Relay saved.');}catch(error){message(error.message,true);}
+    }
   });
   document.querySelector('input[data-key="processes"]').addEventListener('change',event=>{if(event.target.checked)document.querySelector('input[data-key="shell"]').checked=true;});
   document.querySelector('input[data-key="shell"]').addEventListener('change',event=>{if(!event.target.checked)document.querySelector('input[data-key="processes"]').checked=false;});
@@ -891,6 +985,16 @@ export async function startControlUi(options:ControlUiOptions={}):Promise<Contro
         return;
       }
 
+      if(target.pathname==='/api/relay/configure'){
+        const body=await readJsonBody(req);
+        await configureRelay(body);
+        if(body.start===true){
+          await runAgentAction('start');
+        }
+        json(res,200,await statusView());
+        return;
+      }
+
       if(
         target.pathname==='/api/agent/start'
         || target.pathname==='/api/agent/stop'
@@ -909,6 +1013,7 @@ export async function startControlUi(options:ControlUiOptions={}):Promise<Contro
         const body=await readJsonBody(req);
         if(body.confirm!==true)throw new Error('Worker re-registration requires explicit confirmation');
         const workerUrl=parseWorkerOrigin(body);
+        await savePendingRegistrationToken(parseRegistrationToken(body));
         await request('reregister',{workerUrl});
         json(res,200,await statusView());
         return;

@@ -15,7 +15,7 @@
 
 ```sh
 npm install -g @daodao97/localmcp
-localmcp
+localmcp ui
 ```
 
 首次运行会：
@@ -26,10 +26,11 @@ localmcp
 - 文件读取默认开启
 - 文件写入、删除/移动默认关闭
 - Shell、持久进程、外部 MCP 默认关闭
+- **先要求显式选择 Relay，Agent 不会自动启动**
+- Control Center 会预填默认公共 Relay；只有点击 `Save & Start Agent` 后才保存 Relay、注册设备并启动 Agent
 - Agent 启动后默认处于 **LOCKED**
-- 向 Worker 注册设备并在后台启动 Agent
 
-默认公共 Worker 是可信中继基础设施，它会终止 TLS 并转发 MCP 请求/响应；当前架构**不是 ChatGPT 到本机 Agent 的端到端加密**。敏感开发环境建议使用自建 Worker。
+默认公共 Worker 是可信中继基础设施，它会终止 TLS 并转发 MCP 请求/响应；当前架构**不是 ChatGPT 到本机 Agent 的端到端加密**。公共 Relay 只作为首次设置的预填建议值，不再作为 Agent 的隐式运行时 fallback。敏感开发环境建议使用自建 Worker。
 
 ### 获取 MCP URL
 
@@ -59,7 +60,7 @@ localmcp url
 ## 常用命令
 
 ```sh
-localmcp                    # 启动后台 Agent；重复执行会复用已有进程
+localmcp                    # 已配置 Relay 后启动后台 Agent；重复执行会复用已有进程
 localmcp status             # 查看运行状态、LOCK 状态、脱敏 URL、配置/日志路径
 localmcp url                # 显式显示完整 MCP URL
 localmcp unlock             # 本机临时解锁危险能力，默认 30 分钟
@@ -184,9 +185,11 @@ LOCALMCP_REGISTRATION_TOKEN=<raw-token> \
 localmcp
 ```
 
-注册密钥通过 `Authorization` header 发送，不放在 URL 中。
+注册密钥通过 `Authorization` header 发送，不放在 URL 中。桌面版 / Control Center 也可以在首次 Relay 设置中填写 registration token；它只会临时保存在受限权限的 `~/.localmcp/registration-token.pending`，注册成功后立即删除，不写入 `localmcp.json`、audit 或 MCP URL。
 
 ### 3. 连接自建 Worker
+
+可以在首次 Control Center 向导中直接填写自建 Worker URL（以及可选 registration token），或者使用环境变量：
 
 ```sh
 LOCALMCP_WORKER_URL=https://localmcp-relay.YOUR-SUBDOMAIN.workers.dev localmcp
@@ -200,7 +203,7 @@ LOCALMCP_WORKER_URL=https://localmcp-relay.YOUR-SUBDOMAIN.workers.dev localmcp
 
 之后直接执行 `localmcp` 即可。
 
-如果已经连接过其他 Worker，需要切换 Worker 时，请先停止 Agent，并明确处理旧的 `worker.json`。不要把旧凭证误认为会自动迁移到新 Worker。
+如果已经连接过其他 Worker，可以在 Control Center 中显式切换。Agent 运行时会执行 re-registration；Agent 停止时则先保存新的 Relay，下一次启动时再注册。切换只更新本地注册状态，不会自动撤销旧 Worker 上的远端设备注册，必要时请在旧 Worker 侧单独撤销或轮换。
 
 ## 在 ChatGPT 中使用
 
@@ -508,6 +511,7 @@ docs/tasks/LOCAL-CONTROL-UI-V2.md
 docs/tasks/LOCAL-CONTROL-DESKTOP-V1.md
 docs/tasks/LOCAL-CONTROL-TRAY-V1.md
 docs/tasks/WINDOWS-DESKTOP-DISTRIBUTION-V1.md
+docs/tasks/FIRST-RUN-RELAY-SETUP-V1.md
 ```
 
 ## License

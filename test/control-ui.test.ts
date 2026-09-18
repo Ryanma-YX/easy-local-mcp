@@ -456,3 +456,100 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
   assert.ok(stateFiles.includes('control.secret'));
   assert.ok(stateFiles.includes('localmcp.json'));
 });
+
+test('fresh Control Center requires explicit Relay setup before Agent start',{timeout:30000},async t=>{
+  const home=await mkdtemp(join(tmpdir(),'localmcp-first-run-'));
+  const stateDir=join(home,'.localmcp');
+  const env:{[key:string]:string|undefined}={
+    ...process.env,
+    HOME:home,
+    USERPROFILE:home,
+    LOCALMCP_UI_PORT:'0'
+  };
+  delete env.LOCALMCP_CONFIG;
+  delete env.LOCALMCP_ROOT;
+  delete env.LOCALMCP_REGISTRATION_TOKEN;
+  delete env.LOCALMCP_WORKER_URL;
+
+  let uiErrors='';
+  let ui:ReturnType<typeof spawn>|undefined;
+  t.after(async()=>{
+    if(ui&&ui.exitCode===null)ui.kill('SIGTERM');
+    await new Promise(resolveDelay=>setTimeout(resolveDelay,200));
+    await rm(home,{recursive:true,force:true,maxRetries:5,retryDelay:100});
+  });
+
+  ui=spawn(
+    process.execPath,
+    [resolve('dist/index.js'),'ui','--no-open'],
+    {env,stdio:['ignore','pipe','pipe']}
+  );
+  ui.stderr?.on('data',data=>{uiErrors+=data.toString();});
+
+  const uiUrl=await waitForUi(ui,()=>uiErrors);
+  const origin=new URL(uiUrl).origin;
+  const page=await fetch(uiUrl);
+  const html=await page.text();
+  assert.match(html,/Choose a Relay before starting LocalMCP/);
+  assert.match(html,/Save & Start Agent/);
+  const inlineScript=/<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
+  assert.ok(inlineScript);
+  assert.doesNotThrow(()=>new Function(inlineScript));
+
+  const sessionResponse=await fetch(new URL('/api/session',uiUrl),{
+    method:'POST',
+    headers:{Origin:origin,'Content-Type':'application/json'},
+    body:'{}'
+  });
+  const setCookie=sessionResponse.headers.get('set-cookie');
+  assert.ok(setCookie);
+  const cookie=setCookie!.split(';')[0];
+  const api=async(path:string,body:Record<string,unknown>={})=>{
+    const response=await fetch(new URL(path,uiUrl),{
+      method:'POST',
+      headers:{Origin:origin,Cookie:cookie,'Content-Type':'application/json'},
+      body:JSON.stringify(body)
+    });
+    const value=await response.json() as any;
+    return {response,value};
+  };
+
+  const initial=await api('/api/status');
+  assert.equal(initial.response.status,200);
+  assert.equal(initial.value.agent.status,'stopped');
+  assert.equal(initial.value.connection.configured,false);
+  assert.equal(initial.value.connection.needsSetup,true);
+  assert.equal(initial.value.connection.workerUrl,null);
+  assert.equal(
+    initial.value.connection.suggestedWorkerUrl,
+    'https://localmcp-relay.daodao973597.workers.dev/'
+  );
+
+  const blockedStart=await api('/api/agent/start',{confirm:true});
+  assert.equal(blockedStart.response.status,400);
+  assert.match(blockedStart.value.error,/Relay is not configured/);
+
+  const registrationToken='first-run-registration-token-secret';
+  const configured=await api('/api/relay/configure',{
+    workerUrl:'https://relay.example.test',
+    registrationToken,
+    start:false,
+    confirm:true
+  });
+  assert.equal(configured.response.status,200);
+  assert.equal(configured.value.agent.status,'stopped');
+  assert.equal(configured.value.connection.configured,true);
+  assert.equal(configured.value.connection.needsSetup,false);
+  assert.equal(configured.value.connection.workerUrl,'https://relay.example.test/');
+
+  const relayFile=JSON.parse(await readFile(join(stateDir,'relay.json'),'utf8'));
+  assert.equal(relayFile.workerUrl,'https://relay.example.test/');
+  assert.equal(
+    (await readFile(join(stateDir,'registration-token.pending'),'utf8')).trim(),
+    registrationToken
+  );
+
+  const auditText=await readFile(join(stateDir,'audit.log'),'utf8');
+  assert.match(auditText,/relay_config_update/);
+  assert.ok(!auditText.includes(registrationToken));
+});

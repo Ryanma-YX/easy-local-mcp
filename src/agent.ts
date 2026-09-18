@@ -11,6 +11,12 @@ import WebSocket from 'ws';
 import { Assembly, frames, parseFrame, MAX_BYTES } from './relay-protocol.js';
 import { DEFAULT_PUBLIC_WORKER_URL, validatedWorkerOrigin } from './relay.js';
 import {
+  clearPendingRegistrationToken,
+  configuredRelayUrl,
+  registrationToken,
+  saveRelayPreference
+} from './relay-config.js';
+import {
   auditSecurity,
   getUnlockStatus,
   lockLocal,
@@ -50,9 +56,9 @@ async function registerDevice(workerUrl:string):Promise<Settings>{
     'Content-Type':'application/json'
   };
 
-  const registrationToken=process.env.LOCALMCP_REGISTRATION_TOKEN;
-  if(registrationToken){
-    headers.Authorization=`Bearer ${registrationToken}`;
+  const token=await registrationToken();
+  if(token){
+    headers.Authorization=`Bearer ${token}`;
   }
 
   if(target.href===validatedWorkerOrigin(DEFAULT_PUBLIC_WORKER_URL).href){
@@ -70,7 +76,7 @@ async function registerDevice(workerUrl:string):Promise<Settings>{
 
   if(!response.ok){
     throw new Error(
-      `Worker registration failed (${response.status}). Set LOCALMCP_WORKER_URL and, when required, LOCALMCP_REGISTRATION_TOKEN.`
+      `Worker registration failed (${response.status}). Check the Relay URL and registration token in the Control Center, or the LOCALMCP_WORKER_URL / LOCALMCP_REGISTRATION_TOKEN environment overrides.`
     );
   }
 
@@ -93,24 +99,33 @@ async function registerDevice(workerUrl:string):Promise<Settings>{
 }
 
 async function loadSettings(){
+  const desiredWorkerUrl=await configuredRelayUrl();
+  const desiredOrigin=validatedWorkerOrigin(desiredWorkerUrl);
+
   try{
     settings=JSON.parse(await readFile(workerFile,'utf8')) as Settings;
   }catch(error:any){
     if(error.code!=='ENOENT')throw error;
+  }
 
-    const workerUrl=process.env.LOCALMCP_WORKER_URL||DEFAULT_PUBLIC_WORKER_URL;
-    settings=await registerDevice(workerUrl);
+  const registeredOrigin=settings?.workerUrl
+    ? validatedWorkerOrigin(settings.workerUrl)
+    : undefined;
+
+  if(!settings||registeredOrigin?.href!==desiredOrigin.href){
+    settings=await registerDevice(desiredOrigin.href);
     await secureWriteFile(workerFile,JSON.stringify(settings,null,2));
+    await clearPendingRegistrationToken();
 
     await auditSecurity('worker_registration',{
       deviceId:settings.deviceId,
-      publicRelay:validatedWorkerOrigin(workerUrl).href===validatedWorkerOrigin(DEFAULT_PUBLIC_WORKER_URL).href
+      publicRelay:desiredOrigin.href===validatedWorkerOrigin(DEFAULT_PUBLIC_WORKER_URL).href
     });
 
     console.error(`Registered LocalMCP device ${settings.deviceId??'legacy'}.`);
   }
 
-  origin=validatedWorkerOrigin(process.env.LOCALMCP_WORKER_URL||settings.workerUrl);
+  origin=desiredOrigin;
 }
 
 function currentMcpUrl(){
@@ -153,8 +168,10 @@ async function reregisterDevice(workerUrl:string){
 
   settings=next;
   origin=nextOrigin;
+  await saveRelayPreference(nextOrigin.href);
   await secureWriteFile(workerFile,JSON.stringify(settings,null,2));
   await writeConnectionFile();
+  await clearPendingRegistrationToken();
   await auditSecurity('worker_registration',{
     deviceId:settings.deviceId,
     publicRelay:origin.href===validatedWorkerOrigin(DEFAULT_PUBLIC_WORKER_URL).href
