@@ -56,12 +56,11 @@ export async function createServer(config:Config,mcp:McpLoader,skills:Skill[],pr
     for(const [name,schema] of Object.entries(schemas)){
       const decision=await authorizeTool(current,name);
       if(!decision.allowed)continue;
-      tools.push({
-        name,
-        description:descriptions[name as N]||name.replaceAll('_',' '),
-        inputSchema:z.toJSONSchema(schema) as Tool['inputSchema'],
-        annotations:{readOnlyHint:ro.has(name as N),destructiveHint:!ro.has(name as N),openWorldHint:openWorld.has(name as N)}
-      });
+		tools.push({
+		  name,
+		  description:descriptions[name as N]||name.replaceAll('_',' '),
+		  inputSchema:z.toJSONSchema(schema) as Tool['inputSchema']
+		});
     }
     return tools;
   };
