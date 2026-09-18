@@ -510,7 +510,7 @@ header{display:flex;justify-content:space-between;gap:20px;align-items:flex-star
 table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:9px 8px;border-bottom:1px solid #edf0f4;vertical-align:middle}th{font-size:12px;color:#667085}
 input[type="text"],select{width:100%;border:1px solid #cfd6e2;border-radius:8px;padding:8px 9px;background:#fff;color:#182230}input[type="checkbox"],input[type="radio"]{width:17px;height:17px}
 .cap-name{font-weight:700}.cap-note{display:block;font-size:11px;color:#7b8697;margin-top:2px}.workspace-actions{display:flex;gap:6px;align-items:center}.connection-editor{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:12px}
-.audit-tools{display:grid;grid-template-columns:180px 1fr auto;gap:8px;align-items:center;margin-bottom:10px}
+.audit-tools{display:grid;grid-template-columns:180px 1fr auto auto;gap:8px;align-items:center;margin-bottom:10px}.pager{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap}.pager-controls{display:flex;gap:8px;align-items:center}
 #revealed{margin-top:9px;font:12px ui-monospace,SFMono-Regular,Consolas,monospace}#message{position:fixed;right:20px;bottom:20px;max-width:460px;padding:11px 14px;background:#172b4d;color:#fff;border-radius:10px;display:none;white-space:pre-wrap;z-index:10}
 @media(max-width:900px){.summary{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.wide{grid-column:auto}}
 @media(max-width:600px){.shell{padding:18px 10px 40px}.summary{grid-template-columns:1fr 1fr}header{display:block}.audit-tools{grid-template-columns:1fr}.connection-editor{grid-template-columns:1fr}.card{padding:14px}}
@@ -589,9 +589,11 @@ input[type="text"],select{width:100%;border:1px solid #cfd6e2;border-radius:8px;
 <div class="audit-tools">
 <select id="auditCategory"><option value="all">All events</option><option value="denied">Denied / errors</option><option value="security">Security & credentials</option><option value="config">Configuration</option><option value="tools">Tool activity</option></select>
 <input id="auditSearch" type="text" placeholder="Filter event, tool, workspace, result…">
+<select id="auditPageSize" aria-label="Audit rows per page"><option value="10">10 / page</option><option value="25" selected>25 / page</option><option value="50">50 / page</option></select>
 <button id="refreshAudit">Refresh</button>
 </div>
 <div style="overflow:auto"><table><thead><tr><th>Time</th><th>Event</th><th>Tool / workspace</th><th>Result / reason</th></tr></thead><tbody id="auditRows"></tbody></table></div>
+<div class="pager"><span id="auditPageInfo" class="muted">-</span><div class="pager-controls"><button id="auditPrev">Previous</button><button id="auditNext">Next</button></div></div>
 <p class="muted">Only a safe allowlist of audit fields is displayed. Tokens, URLs, command output and arbitrary payloads are omitted.</p>
 </section>
 </div>
@@ -603,6 +605,7 @@ input[type="text"],select{width:100%;border:1px solid #cfd6e2;border-radius:8px;
   let currentWorkspaces=[];
   let currentDefaultWorkspace='';
   let auditEvents=[];
+  let auditPage=1;
   let workerManagedByEnv=false;
   const DEFAULT_WORKER='https://localmcp-relay.daodao973597.workers.dev';
   const $=id=>document.getElementById(id);
@@ -711,16 +714,32 @@ input[type="text"],select{width:100%;border:1px solid #cfd6e2;border-radius:8px;
     const body=$('auditRows'); body.replaceChildren();
     const category=$('auditCategory').value;
     const query=$('auditSearch').value.trim().toLowerCase();
-    for(const event of auditEvents){
-      if(category!=='all'&&eventCategory(event)!==category)continue;
+    const pageSize=Number($('auditPageSize').value)||25;
+    const filtered=auditEvents.filter(event=>{
+      if(category!=='all'&&eventCategory(event)!==category)return false;
       const searchable=Object.values(event).map(String).join(' ').toLowerCase();
-      if(query&&!searchable.includes(query))continue;
+      return !query||searchable.includes(query);
+    });
+    const totalPages=Math.max(1,Math.ceil(filtered.length/pageSize));
+    auditPage=Math.min(Math.max(1,auditPage),totalPages);
+    const start=(auditPage-1)*pageSize;
+    const pageItems=filtered.slice(start,start+pageSize);
+    for(const event of pageItems){
       const tr=document.createElement('tr');
       const values=[event.timestamp||'-',event.event||'-',[event.tool,event.workspace].filter(Boolean).join(' / ')||'-',event.reason||event.result||event.error||event.durationMs||'-'];
       for(const value of values){const td=document.createElement('td');td.textContent=String(value);tr.append(td);} body.append(tr);
     }
+    if(!pageItems.length){
+      const tr=document.createElement('tr');
+      const td=document.createElement('td');td.colSpan=4;td.className='muted';td.textContent='No matching audit events.';tr.append(td);body.append(tr);
+    }
+    const shownFrom=filtered.length?start+1:0;
+    const shownTo=Math.min(start+pageItems.length,filtered.length);
+    $('auditPageInfo').textContent='Showing '+shownFrom+'–'+shownTo+' of '+filtered.length+' · Page '+auditPage+' / '+totalPages;
+    $('auditPrev').disabled=auditPage<=1;
+    $('auditNext').disabled=auditPage>=totalPages;
   };
-  const loadAudit=async()=>{const data=await api('/api/audit');auditEvents=data.events||[];renderAudit();};
+  const loadAudit=async()=>{const data=await api('/api/audit');auditEvents=data.events||[];auditPage=1;renderAudit();};
   const boot=async()=>{await api('/api/session');await load();await loadAudit();};
   const agentAction=async(action)=>{
     if((action==='stop'||action==='restart')&&!confirm((action==='stop'?'Stop':'Restart')+' the LocalMCP Agent? Active MCP connections will be interrupted.'))return;
@@ -769,7 +788,11 @@ input[type="text"],select{width:100%;border:1px solid #cfd6e2;border-radius:8px;
   });
   $('refreshStatus').addEventListener('click',()=>load().catch(error=>message(error.message,true)));
   $('refreshAudit').addEventListener('click',()=>loadAudit().catch(error=>message(error.message,true)));
-  $('auditCategory').addEventListener('change',renderAudit);$('auditSearch').addEventListener('input',renderAudit);
+  $('auditCategory').addEventListener('change',()=>{auditPage=1;renderAudit();});
+  $('auditSearch').addEventListener('input',()=>{auditPage=1;renderAudit();});
+  $('auditPageSize').addEventListener('change',()=>{auditPage=1;renderAudit();});
+  $('auditPrev').addEventListener('click',()=>{if(auditPage>1){auditPage--;renderAudit();}});
+  $('auditNext').addEventListener('click',()=>{auditPage++;renderAudit();});
   boot().catch(error=>message(error.message,true));
 })();
 </script>
@@ -938,7 +961,7 @@ export async function startControlUi(options:ControlUiOptions={}):Promise<Contro
 
       if(target.pathname==='/api/audit'){
         await readJsonBody(req);
-        json(res,200,{events:await readAuditEvents()});
+        json(res,200,{events:await readAuditEvents(200)});
         return;
       }
 

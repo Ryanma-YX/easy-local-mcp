@@ -120,7 +120,7 @@ Security properties:
 
 ### Audit history
 
-V2 keeps the existing safe-field projection and adds client-side filtering:
+V2 keeps the existing safe-field projection and adds client-side filtering and pagination:
 
 - all events
 - denied / errors
@@ -128,8 +128,10 @@ V2 keeps the existing safe-field projection and adds client-side filtering:
 - configuration
 - tool activity
 - free-text filtering
+- 10 / 25 / 50 rows per page
+- previous / next navigation and filtered result counts
 
-Filtering does not add more source fields to the browser.
+Filtering is applied before pagination and does not add more source fields to the browser. The UI loads at most the most recent 200 redacted events from the local audit reader.
 
 ## Control protocol changes
 

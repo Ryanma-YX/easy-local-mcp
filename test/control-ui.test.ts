@@ -181,6 +181,12 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
   assert.match(html,/do not sandbox shell commands/);
   assert.match(html,/Agent lifecycle/);
   assert.match(html,/Re-register Worker/);
+  assert.match(html,/auditPageSize/);
+  assert.match(html,/auditPrev/);
+  assert.match(html,/auditNext/);
+  const inlineScript=/<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
+  assert.ok(inlineScript);
+  assert.doesNotThrow(()=>new Function(inlineScript));
   assert.ok(!html.includes(controlSecret));
   assert.ok(!html.includes('a'.repeat(64)));
 

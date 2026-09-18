@@ -453,7 +453,7 @@ UI v2 支持：
 - `LOCALMCP_WORKER_URL` 环境覆盖存在时，UI 明确显示该来源并禁止改写 Worker
 - 显式 Reveal / Copy 完整 MCP URL
 - 显式确认后进行 credential rotation
-- 可按类别与文本过滤的脱敏 audit history
+- 脱敏 audit history：类别/文本筛选、10/25/50 条分页、上一页/下一页与当前结果计数
 
 启用 Shell 时，UI 会明确提示：LocalMCP Shell 以当前 OS 用户权限执行，Workspace **不是** Shell sandbox。
 
