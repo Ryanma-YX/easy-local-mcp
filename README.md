@@ -67,6 +67,7 @@ localmcp unlock --minutes 5 # 指定 1-480 分钟
 localmcp lock               # 立即重新锁定
 localmcp rotate             # 轮换 Agent/MCP 凭证（设备模式）
 localmcp reload             # 校验并重新加载配置
+localmcp ui                 # 启动仅限本机访问的 Web 控制界面
 localmcp stop               # 停止后台服务
 localmcp agent              # 前台运行，便于调试
 ```
@@ -420,15 +421,45 @@ GitHub Actions 在：
 
 `start:quick` 已统一到正常 lifecycle，不再维护第二套 Quick Tunnel / `.localmcp` 安全模型。
 
-## Phase 2 本地控制 UI
+## 本地 Web 控制 UI
 
-未来的小型本地 tray / control panel 设计见：
+运行：
+
+```sh
+localmcp ui
+```
+
+会启动一个轻量 Web 控制界面，并仅绑定到动态分配的 `127.0.0.1` 端口。命令会打印本地 URL，并在可用时尝试打开默认浏览器；浏览器打开失败不会影响 URL 输出。调试或自动化时可使用：
+
+```sh
+localmcp ui --no-open
+```
+
+控制 UI 不会启动第二个 Agent。它作为本机控制客户端，通过现有的认证控制 IPC 调用 Agent 的 status / lock / unlock / reload / rotate 能力，并与远程 MCP 数据面保持分离。
+
+浏览器控制 API 使用随机、短期、`HttpOnly`、`SameSite=Strict` 的本机会话 Cookie，并要求严格同源 `Origin`。`control.secret` 不会写入 URL、HTML、JavaScript、浏览器历史、普通日志或 MCP 响应。
+
+UI 支持：
+
+- Agent / LOCK 状态与解锁到期时间
+- 5 / 30 / 60 分钟解锁与立即锁定
+- Workspace 与根目录查看
+- `files.read`、`files.write`、`files.delete`、`shell`、`processes`、`externalMcp` 配置编辑
+- 配置校验、原子写入与运行中 Agent reload
+- Worker origin 与默认脱敏 MCP URL
+- 显式 Reveal / Copy 完整 MCP URL
+- 显式确认后进行 credential rotation
+- 安全字段白名单方式展示近期 audit events
+
+启用 Shell 时，UI 会明确提示：LocalMCP Shell 以当前 OS 用户权限执行，Workspace **不是** Shell sandbox。
+
+完整 MCP URL 只会在本机用户显式确认 reveal 后返回给浏览器。控制 UI 不提供远程管理入口，也不会把 unlock、rotate 或配置管理暴露成 MCP tool。
+
+实现与安全设计记录见：
 
 ```text
 docs/tasks/LOCAL-CONTROL-UI.md
 ```
-
-UI 必须复用当前 CLI 使用的同一套本地 policy/control 层，不能另外实现一套 unlock 或授权逻辑。
 
 ## License
 

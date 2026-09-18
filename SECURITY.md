@@ -230,6 +230,24 @@ The control secret is never exposed as an MCP tool and must not be logged.
 
 Unix socket files are restricted to the current user where supported. Windows also relies on the state-file ACL hardening described above.
 
+## Local Web control UI
+
+`localmcp ui` starts a lightweight browser control plane bound explicitly to `127.0.0.1` on a dynamically allocated port. It does not bind to `0.0.0.0`, LAN interfaces, or public interfaces, and it does not create another Agent.
+
+The browser-facing API is separate from the remote MCP data plane. The UI process uses the existing authenticated local control IPC when it needs Agent status, lock/unlock, reload, credential rotation, or explicit MCP URL reveal.
+
+The browser never receives `control.secret`. A browser session is established by a same-origin POST and represented by an ephemeral random `HttpOnly`, `SameSite=Strict` cookie. Control API requests require that session plus an exact same-origin `Origin` header. Query strings are rejected on control routes, and the server validates the loopback peer and expected `Host` value to reduce DNS-rebinding / cross-origin abuse.
+
+The UI HTML and JavaScript contain no credentials. Ordinary status and action responses expose only the masked MCP URL. The complete credential-bearing MCP URL is returned only after an explicit local reveal action; reveal is recorded as a redacted audit event without the URL itself.
+
+Configuration edits update the existing `localmcp.json`. The UI validates the complete candidate configuration with the existing config parser, preserves unrelated supported fields, writes through a restrictive same-directory temporary file, atomically renames it into place, and asks the running Agent to reload. Enabling privileged capabilities requires explicit confirmation.
+
+Recent audit events are projected through a safe field allowlist before display. Secret/token/credential fields, URLs, raw shell commands, stdout/stderr, file contents, and arbitrary payloads are not exposed by the audit viewer.
+
+The UI prominently warns that enabling Shell grants OS-level command execution under the LocalMCP process user's authority and that Workspace boundaries are not a Shell sandbox.
+
+The local Web UI is intended to protect against remote MCP and cross-origin web access. Like the native control IPC, it is not a security boundary against a malicious process already running as the same local OS user.
+
 ## Public relay trust
 
 The default public Worker is convenient, but it is part of the trusted computing base.

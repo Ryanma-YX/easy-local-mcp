@@ -108,6 +108,33 @@ async function main(){
     return;
   }
 
+  if(mode==='ui'){
+    await ensureInitialized();
+    const {startControlUi}=await import('./control-ui.js');
+    const rawPort=process.env.LOCALMCP_UI_PORT;
+    const port=rawPort===undefined?0:Number(rawPort);
+
+    if(!Number.isInteger(port)||port<0||port>65535){
+      throw new Error('LOCALMCP_UI_PORT must be an integer from 0 to 65535');
+    }
+
+    const ui=await startControlUi({
+      port,
+      openBrowser:!process.argv.slice(3).includes('--no-open')
+    });
+
+    console.log(`LocalMCP control UI: ${ui.url}`);
+
+    const close=()=>{
+      void ui.close();
+    };
+
+    process.once('SIGINT',close);
+    process.once('SIGTERM',close);
+    await ui.closed;
+    return;
+  }
+
   if(['start','stop','reload','status','url','unlock','lock','rotate'].includes(mode)){
     const {
       control,
@@ -178,7 +205,7 @@ async function main(){
 
   if(!['stdio','http'].includes(mode)){
     throw new Error(
-      'Usage: localmcp [start|status|url|unlock|lock|rotate|stop|reload|init|agent|stdio|http]'
+      'Usage: localmcp [start|status|url|unlock|lock|rotate|stop|reload|ui|init|agent|stdio|http]'
     );
   }
 

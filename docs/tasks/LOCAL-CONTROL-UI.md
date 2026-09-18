@@ -1,12 +1,20 @@
 # LOCAL-CONTROL-UI
 
+## Status
+
+Implemented on branch:
+
+```text
+local-control-ui-v1
+```
+
+The implementation is a lightweight local Web control UI started by `localmcp ui`. It uses native Node HTTP plus plain HTML/CSS/JavaScript; no Electron or frontend framework was introduced.
+
+The UI is a thin local client over the same security, policy, lifecycle, and authenticated control IPC mechanisms used by the CLI.
+
 ## Goal
 
-Design a small future local control panel / tray application for LocalMCP.
-
-This is a Phase 2 design only. The current security-hardening task must not introduce a large Electron application or a second authorization model.
-
-The UI must be a thin local client over the same security, policy, lifecycle, and control mechanisms used by the CLI.
+Provide a small local control panel for LocalMCP without introducing a remote administration surface or a second authorization model.
 
 ## Design principles
 
@@ -33,42 +41,36 @@ The current implementation already provides the primitives the UI should consume
 
 The UI must not reimplement authorization decisions.
 
-## Proposed architecture
+## Implemented architecture
 
 ```text
-Tray / local control UI
-        |
-        | local authenticated IPC
-        v
-Local control service
-        |
-        +--> lifecycle
-        +--> security policy / unlock state
-        +--> configuration
-        +--> credential rotation
-        +--> audit reader
-        |
-        v
-LocalMCP Agent
+Browser
+  -> http://127.0.0.1:<dynamic-port>
+  -> ephemeral HttpOnly local UI session
+  -> localmcp ui process
+       +--> authenticated native control IPC -> LocalMCP Agent
+       +--> existing config parser -> localmcp.json
+       +--> atomic protected config writer
+       +--> redacted audit reader
 ```
 
-The control service is the authority. The UI is presentation only.
+The Agent control IPC and existing security policy remain authoritative. The browser UI is presentation plus narrowly scoped local configuration management; it is not an MCP endpoint and does not implement a second unlock state.
 
 ## Main surfaces
 
 ### 1. Connection status
 
-Show:
+Current v1 shows:
 
-- Agent running/stopped
-- relay connected/disconnected
+- Agent running/stopped and readiness
+- Agent PID when running
 - current Worker origin
-- device ID when available
 - masked MCP URL
 - configuration path
-- Agent log path
 - current LOCK / UNLOCK state
 - unlock expiry
+
+Relay-specific connection detail, device ID, and Agent log-path presentation can be added later if needed without changing the control boundary.
 
 Do not show the full MCP credential by default.
 
@@ -76,14 +78,13 @@ Provide a deliberate **Reveal / Copy MCP URL** action with a warning that the UR
 
 ### 2. Workspaces
 
-Show configured workspaces:
+Current v1 shows configured workspaces:
 
 - name
 - path
 - default workspace
-- read permission
-- write permission
-- delete/move permission
+
+File read/write/delete permissions are shown in the global feature configuration because they are currently configuration-wide rather than per-workspace permissions.
 
 Future workspace editing should validate paths through the same configuration layer used by the CLI.
 
@@ -91,7 +92,7 @@ The UI must not imply that a workspace path restricts shell access.
 
 ### 3. Permission profile
 
-Present effective capabilities:
+Current v1 presents configured capabilities:
 
 - files.read
 - files.write
@@ -100,21 +101,17 @@ Present effective capabilities:
 - persistent processes
 - external MCP
 
-Separate:
-
-- **configured**
-- **currently available**
-
-For example, `shell` may be configured but unavailable because the Agent is LOCKED.
+The separate LOCK / UNLOCK status remains visible, so a configured privileged capability is not implied to be callable while the Agent is locked. A richer per-capability effective-availability presentation can be added later.
 
 ### 4. LOCK / UNLOCK
 
-Primary security control:
+Current v1 security controls:
 
 - LOCK immediately
-- UNLOCK for 5 / 15 / 30 / 60 minutes
-- custom duration within policy limits
-- visible countdown / expiry time
+- UNLOCK for 5 / 30 / 60 minutes
+- visible expiry time
+
+Custom durations remain available through the CLI and can be added to the UI later.
 
 On Agent restart the UI must show LOCKED even if it previously displayed UNLOCKED.
 
@@ -181,9 +178,9 @@ Flow:
 
 Do not claim complete rotation for legacy Worker modes that do not support device-scoped revocation.
 
-### 8. Worker selection
+### 8. Worker selection — future
 
-Allow the user to view or configure:
+The current UI shows the active Worker origin. A future version may allow the user to view or configure:
 
 - default public relay
 - custom/self-hosted Worker origin
@@ -209,23 +206,24 @@ And:
 
 These warnings should be visible near permission controls rather than hidden only in documentation.
 
-## Local IPC requirements
+## Local control transport
 
-The UI must use the authenticated local control channel.
+The implemented browser UI uses a loopback-only HTTP listener as a presentation transport and continues to use the authenticated native control IPC as the privileged Agent control channel.
 
-It must not:
+The HTTP listener:
 
-- open a TCP admin port
-- expose unlock as an MCP tool
-- bypass the control secret
-- read credential files directly when a control operation exists
-- invent a separate unlock state
+- binds explicitly to `127.0.0.1`
+- uses a dynamic port by default
+- validates loopback peers, exact `Host`, and same-origin `Origin`
+- rejects query strings on control API routes
+- requires an ephemeral `HttpOnly`, `SameSite=Strict` browser session for API access
+- never exposes `control.secret` to the browser
 
-If richer status/config operations are needed, extend the local control protocol with narrowly scoped commands.
+It must not expose unlock as an MCP tool, bypass the native control secret, read credential files directly when an existing control operation is available, or invent a separate unlock state.
 
 ## Configuration editing
 
-If the UI later edits `localmcp.json`:
+The implemented UI edits the existing `localmcp.json` with these rules:
 
 - validate against the same schema before replacing the file
 - write atomically
@@ -255,32 +253,32 @@ Phase 2 UI is not:
 - a secret manager
 - a reason to weaken existing local authentication
 
-## Suggested implementation phases
+## Implementation phases
 
-### Phase A — read-only tray
+### Phase A — local read surfaces — implemented
 
-- status
-- lock state
-- masked URL
+- status / readiness
+- lock state and expiry
+- masked URL / Worker origin
 - workspaces
-- effective capabilities
-- audit viewer
+- configured capability view
+- redacted audit viewer
 
-### Phase B — local actions
+### Phase B — local actions — implemented
 
 - lock
-- timed unlock
-- explicit URL copy
+- timed unlock (5 / 30 / 60 minutes)
+- explicit URL reveal/copy
 - credential rotation
-- controlled config editing
+- controlled config editing with atomic writes and reload
 
-### Phase C — per-action approval
+### Phase C — per-action approval — not implemented
 
 Only after a request/approval protocol is designed and threat-modeled.
 
 ## Acceptance criteria
 
-A future UI implementation is acceptable only if:
+The implementation is acceptable only if:
 
 - CLI and UI produce the same effective authorization decisions
 - restarting the Agent resets unlock state

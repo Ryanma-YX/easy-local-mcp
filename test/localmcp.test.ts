@@ -381,6 +381,18 @@ test('HTTP URL credential and origin protection work with secure read-only tools
   assert.ok(ready);
   assert.equal((await fetch(base+'/mcp')).status,404);
   assert.equal((await fetch(base+'/mcp/wrong')).status,404);
+  assert.equal(
+    (
+      await fetch(
+        base+'/api/status',
+        {
+          method:'POST',
+          headers:{Authorization:`Bearer ${token}`}
+        }
+      )
+    ).status,
+    404
+  );
 
   assert.equal(
     (

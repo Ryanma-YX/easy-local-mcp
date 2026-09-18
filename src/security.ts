@@ -1,4 +1,4 @@
-import { appendFile, chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -48,6 +48,18 @@ export async function secureWriteFile(path:string,data:string){
   await mkdir(dirname(path),{recursive:true,mode:0o700});
   await writeFile(path,data,{mode:0o600});
   await restrictPath(path);
+}
+
+export async function secureWriteFileAtomic(path:string,data:string){
+  const temporary=`${path}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
+
+  try{
+    await secureWriteFile(temporary,data);
+    await rename(temporary,path);
+    await restrictPath(path);
+  }finally{
+    await rm(temporary,{force:true}).catch(()=>{});
+  }
 }
 
 export async function getControlSecret():Promise<string>{
