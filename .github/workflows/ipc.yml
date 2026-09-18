@@ -1,11 +1,11 @@
-name: Cross-platform IPC
+name: Cross-platform test suite
 on:
   push:
   pull_request:
 permissions:
   contents: read
 jobs:
-  ipc:
+  test:
     strategy:
       fail-fast: false
       matrix:
@@ -20,5 +20,4 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-      - run: npm run build
-      - run: node --import tsx --test test/lifecycle.test.ts
+      - run: npm test

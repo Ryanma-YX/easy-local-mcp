@@ -1,12 +1,17 @@
 {
   "workspaces": {
-    "home": "~"
+    "project": "."
   },
-  "defaultWorkspace": "home",
+  "defaultWorkspace": "project",
   "features": {
-    "files": true,
-    "shell": true,
-    "processes": true
+    "files": {
+      "read": true,
+      "write": false,
+      "delete": false
+    },
+    "shell": false,
+    "processes": false,
+    "externalMcp": false
   },
   "skills": {
     "dir": "skills",
