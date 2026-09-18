@@ -96,9 +96,7 @@ test('stable MCP gateways stay lazy, require unlock, validate and forward extern
     tool=>tool.name==='call_mcp_tool'
   )!;
 
-  assert.equal(gateway.annotations?.readOnlyHint,false);
-  assert.equal(gateway.annotations?.destructiveHint,true);
-  assert.equal(gateway.annotations?.openWorldHint,true);
+  assert.equal(gateway.annotations,undefined);
 
   assert.deepEqual(
     JSON.parse(
