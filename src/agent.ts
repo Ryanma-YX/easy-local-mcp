@@ -9,6 +9,7 @@ import { stateDir, logFile, maskMcpUrl, serveControl } from './lifecycle.js';
 import { config } from './config.js';
 import WebSocket from 'ws';
 import { Assembly, frames, parseFrame, MAX_BYTES } from './relay-protocol.js';
+import { DEFAULT_PUBLIC_WORKER_URL, validatedWorkerOrigin } from './relay.js';
 import {
   auditSecurity,
   getUnlockStatus,
@@ -24,8 +25,6 @@ interface Settings {
   mcpToken:string;
   deviceId?:string;
 }
-
-const DEFAULT_PUBLIC_WORKER_URL='https://localmcp-relay.daodao973597.workers.dev';
 
 await mkdir(stateDir,{recursive:true,mode:0o700});
 await resetUnlockOnAgentStart();
@@ -45,31 +44,8 @@ let reloading:Promise<void>|undefined;
 let settings:Settings|undefined;
 let origin:URL|undefined;
 
-function validatedOrigin(value:string){
-  const parsed=new URL(value);
-
-  if(
-    parsed.protocol!=='https:'
-    && !(parsed.protocol==='http:'&&['localhost','127.0.0.1'].includes(parsed.hostname))
-  ){
-    throw new Error('Worker URL must use HTTPS');
-  }
-
-  if(
-    parsed.username
-    || parsed.password
-    || parsed.pathname!=='/'
-    || parsed.search
-    || parsed.hash
-  ){
-    throw new Error('Worker URL must be an origin');
-  }
-
-  return parsed;
-}
-
 async function registerDevice(workerUrl:string):Promise<Settings>{
-  const target=validatedOrigin(workerUrl);
+  const target=validatedWorkerOrigin(workerUrl);
   const headers:Record<string,string>={
     'Content-Type':'application/json'
   };
@@ -79,7 +55,7 @@ async function registerDevice(workerUrl:string):Promise<Settings>{
     headers.Authorization=`Bearer ${registrationToken}`;
   }
 
-  if(target.href===validatedOrigin(DEFAULT_PUBLIC_WORKER_URL).href){
+  if(target.href===validatedWorkerOrigin(DEFAULT_PUBLIC_WORKER_URL).href){
     console.error(
       'Security warning: the default public relay is trusted infrastructure and can observe relayed MCP request/response plaintext. Use a self-hosted Worker for sensitive environments.'
     );
@@ -128,13 +104,13 @@ async function loadSettings(){
 
     await auditSecurity('worker_registration',{
       deviceId:settings.deviceId,
-      publicRelay:validatedOrigin(workerUrl).href===validatedOrigin(DEFAULT_PUBLIC_WORKER_URL).href
+      publicRelay:validatedWorkerOrigin(workerUrl).href===validatedWorkerOrigin(DEFAULT_PUBLIC_WORKER_URL).href
     });
 
     console.error(`Registered LocalMCP device ${settings.deviceId??'legacy'}.`);
   }
 
-  origin=validatedOrigin(process.env.LOCALMCP_WORKER_URL||settings.workerUrl);
+  origin=validatedWorkerOrigin(process.env.LOCALMCP_WORKER_URL||settings.workerUrl);
 }
 
 function currentMcpUrl(){
@@ -164,6 +140,28 @@ async function writeConnectionFile(){
       root:process.env.LOCALMCP_ROOT||process.cwd()
     },null,2)
   );
+}
+
+async function reregisterDevice(workerUrl:string){
+  if(process.env.LOCALMCP_WORKER_URL){
+    throw new Error('Worker origin is controlled by LOCALMCP_WORKER_URL; remove the environment override before changing it in the UI.');
+  }
+
+  const requested=validatedWorkerOrigin(workerUrl);
+  const next=await registerDevice(requested.href);
+  const nextOrigin=validatedWorkerOrigin(next.workerUrl);
+
+  settings=next;
+  origin=nextOrigin;
+  await secureWriteFile(workerFile,JSON.stringify(settings,null,2));
+  await writeConnectionFile();
+  await auditSecurity('worker_registration',{
+    deviceId:settings.deviceId,
+    publicRelay:origin.href===validatedWorkerOrigin(DEFAULT_PUBLIC_WORKER_URL).href
+  });
+
+  ready=false;
+  socket?.terminate();
 }
 
 async function rotateCredentials(){
@@ -232,7 +230,10 @@ const closeControl=await serveControl(
       log:logFile,
       ready,
       locked:unlock.locked,
-      unlockExpiresAt:unlock.expiresAt
+      unlockExpiresAt:unlock.expiresAt,
+      workerUrl:origin?.href??null,
+      deviceId:settings?.deviceId??null,
+      workerManagedByEnv:process.env.LOCALMCP_WORKER_URL!==undefined
     };
   },
   {
@@ -249,7 +250,8 @@ const closeControl=await serveControl(
     lock:async()=>{
       await lockLocal('manual');
     },
-    rotate:rotateCredentials
+    rotate:rotateCredentials,
+    reregister:reregisterDevice
   }
 );
 

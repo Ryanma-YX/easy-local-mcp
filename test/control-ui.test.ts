@@ -67,11 +67,13 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
   const home=await mkdtemp(join(tmpdir(),'localmcp-ui-'));
   const stateDir=join(home,'.localmcp');
   const workspace=join(home,'workspace');
+  const workspace2=join(home,'workspace-2');
   const configPath=join(stateDir,'localmcp.json');
 
   await mkdir(stateDir,{recursive:true});
   await mkdir(join(stateDir,'skills'),{recursive:true});
   await mkdir(workspace,{recursive:true});
+  await mkdir(workspace2,{recursive:true});
 
   const originalConfig={
     workspaces:{project:workspace},
@@ -175,8 +177,10 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
   assert.equal(page.status,200);
   const html=await page.text();
 
-  assert.match(html,/LocalMCP Control/);
-  assert.match(html,/workspace is NOT a shell sandbox/);
+  assert.match(html,/LocalMCP Control Center/);
+  assert.match(html,/do not sandbox shell commands/);
+  assert.match(html,/Agent lifecycle/);
+  assert.match(html,/Re-register Worker/);
   assert.ok(!html.includes(controlSecret));
   assert.ok(!html.includes('a'.repeat(64)));
 
@@ -245,12 +249,25 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
   assert.equal(initial.response.status,200);
   assert.equal(initial.value.agent.status,'running');
   assert.equal(initial.value.agent.locked,true);
-  assert.equal(initial.value.connection.workerUrl,'https://example.test');
+  assert.equal(initial.value.connection.workerUrl,'https://example.test/');
+  assert.equal(initial.value.connection.state,'connected');
+  assert.equal(initial.value.connection.deviceId,'fixture-device');
+  assert.equal(initial.value.connection.workerManagedByEnv,false);
   assert.match(initial.value.connection.mcpUrlMasked,/redacted/i);
   assert.ok(!JSON.stringify(initial.value).includes('a'.repeat(64)));
   assert.equal(initial.value.configuration.defaultWorkspace,'project');
   assert.equal(initial.value.configuration.features.fileRead,true);
   assert.equal(initial.value.configuration.features.fileWrite,false);
+  assert.equal(initial.value.capabilities.find((item:any)=>item.key==='fileRead').availability,'available');
+  assert.equal(initial.value.capabilities.find((item:any)=>item.key==='fileWrite').availability,'disabled');
+
+  const startWhileRunning=await api('/api/agent/start');
+  assert.equal(startWhileRunning.response.status,200);
+  assert.equal(startWhileRunning.value.agent.status,'running');
+  const stopNeedsConfirmation=await api('/api/agent/stop',{confirm:false});
+  assert.equal(stopNeedsConfirmation.response.status,400);
+  const restartNeedsConfirmation=await api('/api/agent/restart',{confirm:false});
+  assert.equal(restartNeedsConfirmation.response.status,400);
 
   const configRead=await api('/api/config');
   assert.equal(configRead.response.status,200);
@@ -318,6 +335,46 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
     externalMcp:true
   });
 
+  const afterPermissions=await api('/api/status');
+  assert.equal(
+    afterPermissions.value.capabilities.find((item:any)=>item.key==='fileWrite').availability,
+    'locked'
+  );
+
+  const workspaceNeedsConfirmation=await api('/api/workspaces/update',{
+    workspaces:[{name:'project',root:workspace}],
+    defaultWorkspace:'project',
+    confirm:false
+  });
+  assert.equal(workspaceNeedsConfirmation.response.status,400);
+
+  const invalidWorkspace=await api('/api/workspaces/update',{
+    workspaces:[{name:'missing',root:join(home,'does-not-exist')}],
+    defaultWorkspace:'missing',
+    confirm:true
+  });
+  assert.equal(invalidWorkspace.response.status,400);
+
+  const workspaceUpdated=await api('/api/workspaces/update',{
+    workspaces:[
+      {name:'project',root:workspace},
+      {name:'archive',root:workspace2}
+    ],
+    defaultWorkspace:'archive',
+    confirm:true
+  });
+  assert.equal(workspaceUpdated.response.status,200);
+  assert.equal(workspaceUpdated.value.saved,true);
+  assert.equal(workspaceUpdated.value.reloaded,true);
+  assert.equal(workspaceUpdated.value.configuration.defaultWorkspace,'archive');
+  assert.equal(workspaceUpdated.value.configuration.workspaces.length,2);
+
+  const savedWorkspaces=JSON.parse(await readFile(configPath,'utf8'));
+  assert.deepEqual(savedWorkspaces.workspaces,{project:workspace,archive:workspace2});
+  assert.equal(savedWorkspaces.defaultWorkspace,'archive');
+  assert.deepEqual(savedWorkspaces.skills,originalConfig.skills);
+  assert.deepEqual(savedWorkspaces.mcpServers,originalConfig.mcpServers);
+
   const reloadResult=await api('/api/reload');
   assert.equal(reloadResult.response.status,200);
   assert.ok(!JSON.stringify(reloadResult.value).includes('a'.repeat(64)));
@@ -337,7 +394,7 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
     )
   ).stdout;
 
-  assert.match(cliStatus,/reloads:2/);
+  assert.match(cliStatus,/reloads:3/);
   assert.match(cliStatus,/rotations:1/);
   assert.ok(!cliStatus.includes('a'.repeat(64)));
 
@@ -350,6 +407,31 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
     revealed.value.url,
     'https://example.test/mcp/device/'+'a'.repeat(64)
   );
+
+  const reregisterNeedsConfirmation=await api('/api/worker/reregister',{
+    workerUrl:'https://worker.example',
+    confirm:false
+  });
+  assert.equal(reregisterNeedsConfirmation.response.status,400);
+
+  const reregistered=await api('/api/worker/reregister',{
+    workerUrl:'https://worker.example',
+    confirm:true
+  });
+  assert.equal(reregistered.response.status,200);
+  assert.equal(reregistered.value.connection.workerUrl,'https://worker.example/');
+  assert.equal(reregistered.value.connection.deviceId,'fixture-device');
+  assert.ok(!JSON.stringify(reregistered.value).includes('a'.repeat(64)));
+
+  const cliAfterReregister=(
+    await exec(
+      process.execPath,
+      [resolve('dist/index.js'),'status'],
+      {env,timeout:10000}
+    )
+  ).stdout;
+  assert.match(cliAfterReregister,/reregistrations:1/);
+  assert.ok(!cliAfterReregister.includes('a'.repeat(64)));
 
   const audit=await api('/api/audit');
   assert.equal(audit.response.status,200);

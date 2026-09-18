@@ -23,14 +23,18 @@ export interface Status {
   ready:boolean;
   locked:boolean;
   unlockExpiresAt:string|null;
+  workerUrl:string|null;
+  deviceId:string|null;
+  workerManagedByEnv:boolean;
 }
 
-type ControlCommand='status'|'stop'|'reload'|'unlock'|'lock'|'rotate';
+type ControlCommand='status'|'stop'|'reload'|'unlock'|'lock'|'rotate'|'reregister';
 
 interface ControlRequest {
   command:ControlCommand;
   secret:string;
   minutes?:number;
+  workerUrl?:string;
 }
 
 export interface ControlHandlers {
@@ -39,6 +43,7 @@ export interface ControlHandlers {
   unlock:(minutes?:number)=>Promise<void>;
   lock:()=>Promise<void>;
   rotate:()=>Promise<void>;
+  reregister:(workerUrl:string)=>Promise<void>;
 }
 
 const pause=(ms:number)=>new Promise(resolvePause=>setTimeout(resolvePause,ms));
@@ -75,7 +80,7 @@ export function maskMcpUrl(url:string|null){
 
 export async function request(
   command:ControlCommand='status',
-  options:{minutes?:number}={}
+  options:{minutes?:number;workerUrl?:string}={}
 ):Promise<Status>{
   const secret=await getControlSecret();
 
@@ -92,7 +97,8 @@ export async function request(
       const payload:ControlRequest={
         command,
         secret,
-        ...(options.minutes===undefined?{}:{minutes:options.minutes})
+        ...(options.minutes===undefined?{}:{minutes:options.minutes}),
+        ...(options.workerUrl===undefined?{}:{workerUrl:options.workerUrl})
       };
       socket.write(JSON.stringify(payload)+'\n');
     });
@@ -143,7 +149,10 @@ export async function status():Promise<Status>{
       log:logFile,
       ready:false,
       locked:true,
-      unlockExpiresAt:null
+      unlockExpiresAt:null,
+      workerUrl:null,
+      deviceId:null,
+      workerManagedByEnv:process.env.LOCALMCP_WORKER_URL!==undefined
     };
   }
 }
@@ -352,6 +361,12 @@ export async function serveControl(
             break;
           case'rotate':
             await handlers.rotate();
+            break;
+          case'reregister':
+            if(typeof parsed.workerUrl!=='string'||!parsed.workerUrl){
+              throw new Error('workerUrl is required');
+            }
+            await handlers.reregister(parsed.workerUrl);
             break;
           case'stop':
             socket.once('close',handlers.stop);

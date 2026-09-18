@@ -225,6 +225,7 @@ The secret protects commands including:
 - unlock
 - lock
 - rotate
+- reregister Worker origin
 
 The control secret is never exposed as an MCP tool and must not be logged.
 
@@ -234,13 +235,15 @@ Unix socket files are restricted to the current user where supported. Windows al
 
 `localmcp ui` starts a lightweight browser control plane bound explicitly to `127.0.0.1` on a dynamically allocated port. It does not bind to `0.0.0.0`, LAN interfaces, or public interfaces, and it does not create another Agent.
 
-The browser-facing API is separate from the remote MCP data plane. The UI process uses the existing authenticated local control IPC when it needs Agent status, lock/unlock, reload, credential rotation, or explicit MCP URL reveal.
+The browser-facing API is separate from the remote MCP data plane. The UI process uses the existing authenticated local lifecycle/control layer for Agent Start/Stop/Restart, status, lock/unlock, reload, credential rotation, Worker re-registration, and explicit MCP URL reveal.
 
 The browser never receives `control.secret`. A browser session is established by a same-origin POST and represented by an ephemeral random `HttpOnly`, `SameSite=Strict` cookie. Control API requests require that session plus an exact same-origin `Origin` header. Query strings are rejected on control routes, and the server validates the loopback peer and expected `Host` value to reduce DNS-rebinding / cross-origin abuse.
 
 The UI HTML and JavaScript contain no credentials. Ordinary status and action responses expose only the masked MCP URL. The complete credential-bearing MCP URL is returned only after an explicit local reveal action; reveal is recorded as a redacted audit event without the URL itself.
 
-Configuration edits update the existing `localmcp.json`. The UI validates the complete candidate configuration with the existing config parser, preserves unrelated supported fields, writes through a restrictive same-directory temporary file, atomically renames it into place, and asks the running Agent to reload. Enabling privileged capabilities requires explicit confirmation.
+Configuration edits update the existing `localmcp.json`. The UI validates the complete candidate configuration with the existing config parser, preserves unrelated supported fields, writes through a restrictive same-directory temporary file, atomically renames it into place, and asks the running Agent to reload. Enabling privileged capabilities requires explicit confirmation. Workspace add/edit/remove/default changes use the same validation path and require explicit confirmation because they change the file-access boundary.
+
+Worker re-registration is performed by the Agent through authenticated control IPC. The browser supplies only a validated Worker origin; Agent/MCP credentials and `LOCALMCP_REGISTRATION_TOKEN` are not returned to the browser or stored in normal configuration. If `LOCALMCP_WORKER_URL` is set, the UI treats the Worker origin as environment-managed and refuses to change it. Switching Worker replaces local registration state but does not claim to revoke a previous Worker's remote device registration; revoke or rotate that old registration separately when required.
 
 Recent audit events are projected through a safe field allowlist before display. Secret/token/credential fields, URLs, raw shell commands, stdout/stderr, file contents, and arbitrary payloads are not exposed by the audit viewer.
 

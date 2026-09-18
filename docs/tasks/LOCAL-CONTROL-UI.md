@@ -2,11 +2,13 @@
 
 ## Status
 
-Implemented on branch:
+This document records the V1 baseline implemented on:
 
 ```text
 local-control-ui-v1
 ```
+
+The current V2 Control Center extends this baseline with lifecycle management, Workspace CRUD, capability availability, Worker re-registration, and audit filtering. See `docs/tasks/LOCAL-CONTROL-UI-V2.md`.
 
 The implementation is a lightweight local Web control UI started by `localmcp ui`. It uses native Node HTTP plus plain HTML/CSS/JavaScript; no Electron or frontend framework was introduced.
 

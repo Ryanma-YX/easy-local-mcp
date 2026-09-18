@@ -12,9 +12,20 @@ import {join,resolve} from 'node:path';
 import {spawn,type ChildProcess} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {Assembly,frames,parseFrame} from '../src/relay-protocol.js';
+import {validatedWorkerOrigin} from '../src/relay.js';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import WebSocket from 'ws';
+
+test('Worker origins require HTTPS except explicit loopback development origins',()=>{
+  assert.equal(validatedWorkerOrigin('https://worker.example').href,'https://worker.example/');
+  assert.equal(validatedWorkerOrigin('http://localhost:8787').href,'http://localhost:8787/');
+  assert.equal(validatedWorkerOrigin('http://127.0.0.1:8787').href,'http://127.0.0.1:8787/');
+  assert.throws(()=>validatedWorkerOrigin('http://worker.example'),/HTTPS/);
+  assert.throws(()=>validatedWorkerOrigin('https://worker.example/register'),/origin/);
+  assert.throws(()=>validatedWorkerOrigin('https://user:pass@worker.example'),/origin/);
+  assert.throws(()=>validatedWorkerOrigin('https://worker.example?token=nope'),/origin/);
+});
 
 test('relay framing preserves large Unicode/image payloads and rejects invalid sequences',()=>{
   const value={

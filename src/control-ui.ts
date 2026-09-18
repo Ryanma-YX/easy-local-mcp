@@ -4,7 +4,8 @@ import { open, readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { config, configFilePath } from './config.js';
 import { auditFile, auditSecurity, secureWriteFileAtomic } from './security.js';
-import { maskMcpUrl, request, status } from './lifecycle.js';
+import { control, maskMcpUrl, request, status } from './lifecycle.js';
+import { DEFAULT_PUBLIC_WORKER_URL, validatedWorkerOrigin } from './relay.js';
 
 const UI_HOST='127.0.0.1';
 const SESSION_COOKIE='localmcp_ui_session';
@@ -190,9 +191,26 @@ function workerOrigin(url:string|null){
   try{return new URL(url).origin;}catch{return null;}
 }
 
+function capabilityAvailability(enabled:boolean,privileged:boolean,current:Awaited<ReturnType<typeof status>>){
+  if(!enabled)return 'disabled';
+  if(current.status!=='running')return 'agent-stopped';
+  if(!current.ready)return 'connecting';
+  if(privileged&&current.locked)return 'locked';
+  return 'available';
+}
+
 async function statusView(){
   const current=await status();
   const configuration=await configView();
+  const effective=configuration.effectiveFeatures;
+  const capabilityMeta:{key:keyof FeatureState;privileged:boolean}[]=[
+    {key:'fileRead',privileged:false},
+    {key:'fileWrite',privileged:true},
+    {key:'fileDelete',privileged:true},
+    {key:'shell',privileged:true},
+    {key:'processes',privileged:true},
+    {key:'externalMcp',privileged:true}
+  ];
 
   return {
     agent:{
@@ -200,12 +218,24 @@ async function statusView(){
       pid:current.pid,
       ready:current.ready,
       locked:current.locked,
-      unlockExpiresAt:current.unlockExpiresAt
+      unlockExpiresAt:current.unlockExpiresAt,
+      log:current.log
     },
     connection:{
-      workerUrl:workerOrigin(current.url),
+      state:current.status==='running'?(current.ready?'connected':'connecting'):'stopped',
+      workerUrl:current.workerUrl??workerOrigin(current.url),
+      deviceId:current.deviceId,
+      workerManagedByEnv:current.workerManagedByEnv,
+      publicRelay:(current.workerUrl??workerOrigin(current.url))===validatedWorkerOrigin(DEFAULT_PUBLIC_WORKER_URL).href,
       mcpUrlMasked:maskMcpUrl(current.url)
     },
+    capabilities:capabilityMeta.map(({key,privileged})=>({
+      key,
+      configured:configuration.features[key],
+      effective:effective[key],
+      privileged,
+      availability:capabilityAvailability(effective[key],privileged,current)
+    })),
     configuration
   };
 }
@@ -316,6 +346,76 @@ async function updateConfiguration(body:JsonObject){
   };
 }
 
+async function updateWorkspaces(body:JsonObject){
+  if(body.confirm!==true){
+    throw new Error('Workspace changes require explicit confirmation');
+  }
+
+  const source=body.workspaces;
+  if(!Array.isArray(source)||source.length<1||source.length>32){
+    throw new Error('workspaces must contain 1 to 32 entries');
+  }
+
+  const workspaces:Record<string,string>={};
+  for(const entry of source){
+    if(!entry||typeof entry!=='object'||Array.isArray(entry)){
+      throw new Error('Each workspace must be an object');
+    }
+    const item=entry as JsonObject;
+    const name=typeof item.name==='string'?item.name.trim():'';
+    const root=typeof item.root==='string'?item.root.trim():'';
+    if(!/^[A-Za-z0-9._-]{1,64}$/.test(name)){
+      throw new Error('Workspace names may contain only letters, numbers, dot, underscore, and hyphen');
+    }
+    if(!root||root.length>4096)throw new Error(`Workspace '${name}' requires a valid path`);
+    if(workspaces[name]!==undefined)throw new Error(`Duplicate workspace '${name}'`);
+    workspaces[name]=root;
+  }
+
+  const defaultWorkspace=typeof body.defaultWorkspace==='string'
+    ? body.defaultWorkspace.trim()
+    : '';
+  if(!workspaces[defaultWorkspace]){
+    throw new Error('defaultWorkspace must reference one of the configured workspaces');
+  }
+
+  const {path,raw}=await readRawConfig();
+  const nextRaw:JsonObject={...raw,workspaces,defaultWorkspace};
+  delete nextRaw.root;
+  const content=JSON.stringify(nextRaw,null,2)+'\n';
+
+  await config({content,path});
+  await secureWriteFileAtomic(path,content);
+  await auditSecurity('config_update',{changed:'workspaces'});
+
+  const current=await status();
+  let reloaded=false;
+  if(current.status==='running'){
+    await request('reload');
+    reloaded=true;
+  }
+
+  return {saved:true,reloaded,configuration:await configView()};
+}
+
+async function runAgentAction(action:'start'|'stop'|'restart'){
+  if(action==='restart'){
+    const current=await status();
+    if(current.status==='running')await control('stop');
+    await control('start');
+  }else{
+    await control(action);
+  }
+  return statusView();
+}
+
+function parseWorkerOrigin(body:JsonObject){
+  const value=typeof body.workerUrl==='string'?body.workerUrl.trim():'';
+  if(!value)throw new Error('workerUrl is required');
+  if(value.length>2048)throw new Error('workerUrl is too long');
+  return validatedWorkerOrigin(value).href;
+}
+
 function safeAuditValue(value:unknown){
   if(value===null||typeof value==='number'||typeof value==='boolean')return value;
   if(typeof value!=='string')return undefined;
@@ -394,62 +494,104 @@ const PAGE=String.raw`<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>LocalMCP Control</title>
+<title>LocalMCP Control Center</title>
 <style>
-:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;background:#f5f7fb}
-*{box-sizing:border-box}body{margin:0}.wrap{max-width:1120px;margin:0 auto;padding:28px 20px 48px}
-header{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;margin-bottom:22px}h1{margin:0;font-size:28px}p{margin:.45rem 0;color:#5a6578}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:16px}.card{background:#fff;border:1px solid #dfe5ef;border-radius:14px;padding:18px;box-shadow:0 4px 16px rgba(24,39,75,.05)}
-h2{font-size:17px;margin:0 0 14px}.row{display:flex;justify-content:space-between;gap:16px;padding:7px 0;border-bottom:1px solid #edf0f5}.row:last-child{border-bottom:0}.label{color:#6a7487}.value{font-weight:600;text-align:right;word-break:break-all}
-.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}button{border:1px solid #cad2df;background:#fff;border-radius:9px;padding:8px 12px;font-weight:650;cursor:pointer}button.primary{background:#172033;color:#fff;border-color:#172033}button.danger{border-color:#d33;color:#b42318}button:disabled{opacity:.45;cursor:not-allowed}
-.badge{display:inline-flex;padding:4px 8px;border-radius:999px;font-size:12px;font-weight:700;background:#edf1f7}.warning{display:none;margin-top:12px;padding:12px;border-radius:10px;background:#fff1d6;color:#784800;font-weight:600}.warning.show{display:block}
-fieldset{border:0;padding:0;margin:0}.toggle{display:flex;align-items:center;justify-content:space-between;padding:8px 0}.toggle input{width:18px;height:18px}.path{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;word-break:break-all;color:#4d596c}
-table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:8px;border-bottom:1px solid #edf0f5;vertical-align:top}th{color:#6a7487}.wide{grid-column:1/-1}
-#revealed{width:100%;padding:9px;border:1px solid #cad2df;border-radius:8px;margin-top:8px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
-#message{position:fixed;right:20px;bottom:20px;max-width:420px;padding:11px 14px;background:#172033;color:white;border-radius:10px;display:none;white-space:pre-wrap}.muted{color:#7b8596;font-size:12px}
-@media(max-width:640px){header{display:block}.wrap{padding:18px 12px}.card{padding:15px}}
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#182230;background:#f4f6f9}
+*{box-sizing:border-box}body{margin:0;background:#f4f6f9}.shell{max-width:1240px;margin:0 auto;padding:26px 20px 52px}
+header{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:20px}h1{font-size:28px;margin:0}h2{font-size:17px;margin:0 0 14px}p{margin:.45rem 0;color:#667085}
+.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}.metric,.card{background:#fff;border:1px solid #e1e6ee;border-radius:14px;box-shadow:0 4px 14px rgba(16,24,40,.04)}
+.metric{padding:14px 16px}.metric-label{font-size:12px;color:#667085}.metric-value{margin-top:5px;font-size:17px;font-weight:750;word-break:break-word}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.card{padding:18px}.wide{grid-column:1/-1}
+.row{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid #edf0f4}.row:last-child{border-bottom:0}.label{color:#667085}.value{font-weight:650;text-align:right;word-break:break-all}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}button{border:1px solid #cfd6e2;background:#fff;border-radius:9px;padding:8px 12px;font-weight:650;cursor:pointer;color:#27364b}button.primary{background:#172b4d;border-color:#172b4d;color:#fff}button.danger{border-color:#f0a3a3;color:#b42318}button:disabled{opacity:.45;cursor:not-allowed}
+.badge{display:inline-flex;padding:4px 8px;border-radius:999px;background:#eef2f6;font-size:12px;font-weight:750}.badge.ok{background:#e9f8ef;color:#067647}.badge.warn{background:#fff4e5;color:#b54708}.badge.bad{background:#feecec;color:#b42318}
+.muted{font-size:12px;color:#7b8697}.path{font:12px ui-monospace,SFMono-Regular,Consolas,monospace;color:#475467;word-break:break-all}
+.warning{margin-top:12px;padding:11px 12px;border-radius:10px;background:#fff4e5;color:#7a4b00;font-size:13px;font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:9px 8px;border-bottom:1px solid #edf0f4;vertical-align:middle}th{font-size:12px;color:#667085}
+input[type="text"],select{width:100%;border:1px solid #cfd6e2;border-radius:8px;padding:8px 9px;background:#fff;color:#182230}input[type="checkbox"],input[type="radio"]{width:17px;height:17px}
+.cap-name{font-weight:700}.cap-note{display:block;font-size:11px;color:#7b8697;margin-top:2px}.workspace-actions{display:flex;gap:6px;align-items:center}.connection-editor{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:12px}
+.audit-tools{display:grid;grid-template-columns:180px 1fr auto;gap:8px;align-items:center;margin-bottom:10px}
+#revealed{margin-top:9px;font:12px ui-monospace,SFMono-Regular,Consolas,monospace}#message{position:fixed;right:20px;bottom:20px;max-width:460px;padding:11px 14px;background:#172b4d;color:#fff;border-radius:10px;display:none;white-space:pre-wrap;z-index:10}
+@media(max-width:900px){.summary{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.wide{grid-column:auto}}
+@media(max-width:600px){.shell{padding:18px 10px 40px}.summary{grid-template-columns:1fr 1fr}header{display:block}.audit-tools{grid-template-columns:1fr}.connection-editor{grid-template-columns:1fr}.card{padding:14px}}
 </style>
 </head>
 <body>
-<div class="wrap">
-<header><div><h1>LocalMCP Control</h1><p>Local-only control plane. This page does not expose the control secret.</p></div><span id="securityBadge" class="badge">Connecting…</span></header>
+<div class="shell">
+<header>
+  <div><h1>LocalMCP Control Center</h1><p>Local-only administration over the existing authenticated control plane.</p></div>
+  <div class="actions" style="margin-top:0"><button id="refreshStatus">Refresh</button><span id="securityBadge" class="badge">Connecting…</span></div>
+</header>
+
+<div class="summary">
+  <div class="metric"><div class="metric-label">Agent</div><div id="summaryAgent" class="metric-value">-</div></div>
+  <div class="metric"><div class="metric-label">Relay</div><div id="summaryRelay" class="metric-value">-</div></div>
+  <div class="metric"><div class="metric-label">Security</div><div id="summarySecurity" class="metric-value">-</div></div>
+  <div class="metric"><div class="metric-label">Default workspace</div><div id="summaryWorkspace" class="metric-value">-</div></div>
+</div>
+
 <div class="grid">
 <section class="card">
-<h2>Agent status</h2>
+<h2>Agent lifecycle</h2>
 <div class="row"><span class="label">Status</span><span id="agentStatus" class="value">-</span></div>
 <div class="row"><span class="label">PID</span><span id="pid" class="value">-</span></div>
 <div class="row"><span class="label">Unlock expires</span><span id="expiry" class="value">-</span></div>
-<div class="actions"><button data-minutes="5">Unlock 5m</button><button data-minutes="30">Unlock 30m</button><button data-minutes="60">Unlock 60m</button><button id="lock" class="danger">Lock now</button></div>
+<div class="row"><span class="label">Log</span><span id="logPath" class="path">-</span></div>
+<div class="actions">
+  <button id="agentStart" class="primary">Start</button>
+  <button id="agentRestart">Restart</button>
+  <button id="agentStop" class="danger">Stop</button>
+  <button id="reload">Reload config</button>
+</div>
+<div class="actions">
+  <button data-minutes="5">Unlock 5m</button><button data-minutes="30">Unlock 30m</button><button data-minutes="60">Unlock 60m</button><button id="lock" class="danger">Lock now</button>
+</div>
 </section>
+
 <section class="card">
-<h2>Connection</h2>
-<div class="row"><span class="label">Worker</span><span id="worker" class="value">-</span></div>
+<h2>Relay & connection</h2>
+<div class="row"><span class="label">State</span><span id="relayState" class="value">-</span></div>
+<div class="row"><span class="label">Worker origin</span><span id="worker" class="value">-</span></div>
+<div class="row"><span class="label">Device</span><span id="deviceId" class="value">-</span></div>
 <div class="row"><span class="label">MCP URL</span><span id="maskedUrl" class="value">-</span></div>
-<div class="actions"><button id="reveal">Reveal / Copy MCP URL</button><button id="reload">Reload configuration</button><button id="rotate" class="danger">Rotate credentials</button></div>
+<div class="connection-editor"><input id="workerInput" type="text" aria-label="Worker origin" placeholder="https://worker.example.com"><button id="useDefaultWorker">Use public relay</button></div>
+<p id="workerHint" class="muted">Changing Worker re-registers this device. Registration credentials remain inside the Agent.</p>
+<div class="actions"><button id="reregisterWorker">Re-register Worker</button><button id="reveal">Reveal / Copy MCP URL</button><button id="rotate" class="danger">Rotate credentials</button></div>
 <input id="revealed" type="text" readonly hidden aria-label="Revealed MCP URL">
 </section>
-<section class="card">
-<h2>Configuration</h2>
-<div id="configPath" class="path"></div>
-<fieldset id="features">
-<label class="toggle"><span>files.read</span><input type="checkbox" data-key="fileRead"></label>
-<label class="toggle"><span>files.write</span><input type="checkbox" data-key="fileWrite"></label>
-<label class="toggle"><span>files.delete</span><input type="checkbox" data-key="fileDelete"></label>
-<label class="toggle"><span>shell</span><input type="checkbox" data-key="shell"></label>
-<label class="toggle"><span>processes</span><input type="checkbox" data-key="processes"></label>
-<label class="toggle"><span>externalMcp</span><input type="checkbox" data-key="externalMcp"></label>
-</fieldset>
-<div id="shellWarning" class="warning">Shell grants OS-level command execution under the LocalMCP process user's authority. The configured workspace is NOT a shell sandbox.</div>
-<div class="actions"><button id="saveConfig" class="primary">Save configuration</button></div>
-</section>
-<section class="card">
-<h2>Workspaces</h2>
-<div id="workspaces"></div>
-</section>
+
 <section class="card wide">
-<h2>Recent audit events</h2>
-<div class="actions"><button id="refreshAudit">Refresh audit</button></div>
-<div style="overflow:auto;margin-top:8px"><table><thead><tr><th>Time</th><th>Event</th><th>Tool / workspace</th><th>Result / reason</th></tr></thead><tbody id="auditRows"></tbody></table></div>
+<h2>Permissions</h2>
+<p class="muted">Configured controls what LocalMCP may expose. Current availability also reflects Agent and LOCK / UNLOCK state.</p>
+<div style="overflow:auto"><table>
+<thead><tr><th>Capability</th><th>Configured</th><th>Effective config</th><th>Current availability</th></tr></thead>
+<tbody id="capabilityRows">
+<tr data-cap="fileRead"><td><span class="cap-name">files.read</span><span class="cap-note">Read workspace files</span></td><td><input type="checkbox" data-key="fileRead"></td><td class="effective">-</td><td class="availability">-</td></tr>
+<tr data-cap="fileWrite"><td><span class="cap-name">files.write</span><span class="cap-note">Privileged</span></td><td><input type="checkbox" data-key="fileWrite"></td><td class="effective">-</td><td class="availability">-</td></tr>
+<tr data-cap="fileDelete"><td><span class="cap-name">files.delete</span><span class="cap-note">Privileged</span></td><td><input type="checkbox" data-key="fileDelete"></td><td class="effective">-</td><td class="availability">-</td></tr>
+<tr data-cap="shell"><td><span class="cap-name">shell</span><span class="cap-note">OS-level command execution</span></td><td><input type="checkbox" data-key="shell"></td><td class="effective">-</td><td class="availability">-</td></tr>
+<tr data-cap="processes"><td><span class="cap-name">processes</span><span class="cap-note">Requires shell</span></td><td><input type="checkbox" data-key="processes"></td><td class="effective">-</td><td class="availability">-</td></tr>
+<tr data-cap="externalMcp"><td><span class="cap-name">externalMcp</span><span class="cap-note">External MCP execution is privileged</span></td><td><input type="checkbox" data-key="externalMcp"></td><td class="effective">-</td><td class="availability">-</td></tr>
+</tbody></table></div>
+<div class="warning">Shell runs with the LocalMCP OS user's authority. Workspace restrictions protect LocalMCP file tools; they do not sandbox shell commands.</div>
+<div class="actions"><button id="saveConfig" class="primary">Save permission profile</button><span id="configPath" class="path"></span></div>
+</section>
+
+<section class="card wide">
+<h2>Workspaces</h2>
+<p class="muted">Workspace changes alter the file-access boundary and require explicit confirmation. Paths must already exist and be directories.</p>
+<div style="overflow:auto"><table><thead><tr><th>Default</th><th>Name</th><th>Path</th><th></th></tr></thead><tbody id="workspaceRows"></tbody></table></div>
+<div class="actions"><button id="addWorkspace">Add workspace</button><button id="saveWorkspaces" class="primary">Save workspaces</button></div>
+</section>
+
+<section class="card wide">
+<h2>Audit history</h2>
+<div class="audit-tools">
+<select id="auditCategory"><option value="all">All events</option><option value="denied">Denied / errors</option><option value="security">Security & credentials</option><option value="config">Configuration</option><option value="tools">Tool activity</option></select>
+<input id="auditSearch" type="text" placeholder="Filter event, tool, workspace, result…">
+<button id="refreshAudit">Refresh</button>
+</div>
+<div style="overflow:auto"><table><thead><tr><th>Time</th><th>Event</th><th>Tool / workspace</th><th>Result / reason</th></tr></thead><tbody id="auditRows"></tbody></table></div>
 <p class="muted">Only a safe allowlist of audit fields is displayed. Tokens, URLs, command output and arbitrary payloads are omitted.</p>
 </section>
 </div>
@@ -458,142 +600,176 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
 <script>
 (() => {
   let currentFeatures=null;
+  let currentWorkspaces=[];
+  let currentDefaultWorkspace='';
+  let auditEvents=[];
+  let workerManagedByEnv=false;
+  const DEFAULT_WORKER='https://localmcp-relay.daodao973597.workers.dev';
   const $=id=>document.getElementById(id);
   const message=(value,error=false)=>{
     const node=$('message');
     node.textContent=value;
-    node.style.background=error?'#8a1c13':'#172033';
+    node.style.background=error?'#8a1c13':'#172b4d';
     node.style.display='block';
     clearTimeout(message.timer);
     message.timer=setTimeout(()=>node.style.display='none',4500);
   };
   const api=async(path,body={})=>{
-    const response=await fetch(path,{
-      method:'POST',
-      credentials:'same-origin',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(body)
-    });
+    const response=await fetch(path,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const data=await response.json().catch(()=>({error:'Invalid server response'}));
     if(!response.ok)throw new Error(data.error||('HTTP '+response.status));
     return data;
   };
-  const setFeatures=features=>{
+  const badge=(text,state)=>{
+    const span=document.createElement('span');
+    span.className='badge '+(state||'');
+    span.textContent=text;
+    return span;
+  };
+  const setFeatures=(features,capabilities)=>{
     currentFeatures={...features};
-    document.querySelectorAll('#features input[data-key]').forEach(input=>{
-      input.checked=!!features[input.dataset.key];
+    document.querySelectorAll('#capabilityRows input[data-key]').forEach(input=>{input.checked=!!features[input.dataset.key];});
+    for(const capability of capabilities||[]){
+      const row=document.querySelector('tr[data-cap="'+capability.key+'"]');
+      if(!row)continue;
+      row.querySelector('.effective').replaceChildren(badge(capability.effective?'Enabled':'Disabled',capability.effective?'ok':''));
+      const state=capability.availability==='available'?'ok':capability.availability==='locked'?'warn':capability.availability==='disabled'?'':'bad';
+      row.querySelector('.availability').replaceChildren(badge(capability.availability,state));
+    }
+  };
+  const renderWorkspaces=()=>{
+    const body=$('workspaceRows');
+    body.replaceChildren();
+    currentWorkspaces.forEach((workspace,index)=>{
+      const tr=document.createElement('tr');
+      const tdDefault=document.createElement('td');
+      const radio=document.createElement('input');
+      radio.type='radio'; radio.name='defaultWorkspace'; radio.checked=workspace.name===currentDefaultWorkspace;
+      radio.addEventListener('change',()=>{if(radio.checked)currentDefaultWorkspace=workspace.name;});
+      tdDefault.append(radio);
+      const tdName=document.createElement('td');
+      const name=document.createElement('input'); name.type='text'; name.value=workspace.name; name.maxLength=64;
+      name.addEventListener('input',()=>{const old=workspace.name;workspace.name=name.value;if(currentDefaultWorkspace===old)currentDefaultWorkspace=workspace.name;});
+      tdName.append(name);
+      const tdRoot=document.createElement('td');
+      const root=document.createElement('input'); root.type='text'; root.value=workspace.root;
+      root.addEventListener('input',()=>{workspace.root=root.value;});
+      tdRoot.append(root);
+      const tdAction=document.createElement('td');
+      const remove=document.createElement('button'); remove.textContent='Remove'; remove.className='danger'; remove.disabled=currentWorkspaces.length===1;
+      remove.addEventListener('click',()=>{const removed=currentWorkspaces.splice(index,1)[0];if(removed.name===currentDefaultWorkspace)currentDefaultWorkspace=currentWorkspaces[0].name;renderWorkspaces();});
+      tdAction.append(remove);
+      tr.append(tdDefault,tdName,tdRoot,tdAction); body.append(tr);
     });
-    $('shellWarning').classList.toggle('show',!!features.shell);
   };
   const load=async()=>{
     const data=await api('/api/status');
-    $('agentStatus').textContent=data.agent.status+(data.agent.ready?' / ready':'');
+    const running=data.agent.status==='running';
+    $('agentStatus').textContent=data.agent.status+(data.agent.ready?' / ready':running?' / connecting':'');
     $('pid').textContent=data.agent.pid??'-';
     $('expiry').textContent=data.agent.unlockExpiresAt??'-';
+    $('logPath').textContent=data.agent.log??'-';
     $('securityBadge').textContent=data.agent.locked?'LOCKED':'UNLOCKED';
+    $('securityBadge').className='badge '+(data.agent.locked?'warn':'ok');
+    $('summaryAgent').textContent=data.agent.ready?'Running / ready':running?'Running / connecting':'Stopped';
+    $('summaryRelay').textContent=data.connection.state;
+    $('summarySecurity').textContent=data.agent.locked?'LOCKED':'UNLOCKED';
+    $('summaryWorkspace').textContent=data.configuration.defaultWorkspace;
+    $('relayState').textContent=data.connection.state;
     $('worker').textContent=data.connection.workerUrl??'-';
+    $('deviceId').textContent=data.connection.deviceId??'legacy / unavailable';
     $('maskedUrl').textContent=data.connection.mcpUrlMasked??'-';
     $('configPath').textContent=data.configuration.path;
-    setFeatures(data.configuration.features);
-    const root=$('workspaces');
-    root.replaceChildren();
-    for(const workspace of data.configuration.workspaces){
-      const row=document.createElement('div');
-      row.className='row';
-      const left=document.createElement('span');
-      left.className='label';
-      left.textContent=workspace.name+(workspace.default?' (default)':'');
-      const right=document.createElement('span');
-      right.className='path';
-      right.textContent=workspace.root;
-      row.append(left,right);
-      root.append(row);
-    }
+    workerManagedByEnv=!!data.connection.workerManagedByEnv;
+    $('workerInput').value=data.connection.workerUrl??'';
+    $('workerInput').disabled=workerManagedByEnv;
+    $('reregisterWorker').disabled=workerManagedByEnv||!running;
+    $('useDefaultWorker').disabled=workerManagedByEnv;
+    $('workerHint').textContent=workerManagedByEnv
+      ? 'Worker origin is controlled by LOCALMCP_WORKER_URL. Remove the environment override before changing it here.'
+      : (data.connection.publicRelay?'Using the default public relay. It is trusted infrastructure, not end-to-end encrypted.':'Custom Worker origin. Re-registering replaces device credentials for this Agent.');
+    $('agentStart').disabled=running;
+    $('agentStop').disabled=!running;
+    $('agentRestart').disabled=!running;
+    $('lock').disabled=!running;
+    document.querySelectorAll('button[data-minutes]').forEach(button=>button.disabled=!running);
+    setFeatures(data.configuration.features,data.capabilities);
+    currentWorkspaces=data.configuration.workspaces.map(item=>({name:item.name,root:item.root}));
+    currentDefaultWorkspace=data.configuration.defaultWorkspace;
+    renderWorkspaces();
   };
-  const loadAudit=async()=>{
-    const data=await api('/api/audit');
-    const body=$('auditRows');
-    body.replaceChildren();
-    for(const event of data.events){
+  const eventCategory=event=>{
+    const name=String(event.event||'').toLowerCase();
+    const result=String(event.result||'').toLowerCase();
+    if(event.reason||event.error||result==='denied'||result==='error')return 'denied';
+    if(name.includes('lock')||name.includes('unlock')||name.includes('credential')||name.includes('worker')||name.includes('reveal'))return 'security';
+    if(name.includes('config'))return 'config';
+    if(event.tool)return 'tools';
+    return 'other';
+  };
+  const renderAudit=()=>{
+    const body=$('auditRows'); body.replaceChildren();
+    const category=$('auditCategory').value;
+    const query=$('auditSearch').value.trim().toLowerCase();
+    for(const event of auditEvents){
+      if(category!=='all'&&eventCategory(event)!==category)continue;
+      const searchable=Object.values(event).map(String).join(' ').toLowerCase();
+      if(query&&!searchable.includes(query))continue;
       const tr=document.createElement('tr');
-      const values=[
-        event.timestamp||'-',
-        event.event||'-',
-        [event.tool,event.workspace].filter(Boolean).join(' / ')||'-',
-        event.reason||event.result||event.error||event.durationMs||'-'
-      ];
-      for(const value of values){
-        const td=document.createElement('td');
-        td.textContent=String(value);
-        tr.append(td);
-      }
-      body.append(tr);
+      const values=[event.timestamp||'-',event.event||'-',[event.tool,event.workspace].filter(Boolean).join(' / ')||'-',event.reason||event.result||event.error||event.durationMs||'-'];
+      for(const value of values){const td=document.createElement('td');td.textContent=String(value);tr.append(td);} body.append(tr);
     }
   };
-  const boot=async()=>{
-    await api('/api/session');
-    await load();
-    await loadAudit();
+  const loadAudit=async()=>{const data=await api('/api/audit');auditEvents=data.events||[];renderAudit();};
+  const boot=async()=>{await api('/api/session');await load();await loadAudit();};
+  const agentAction=async(action)=>{
+    if((action==='stop'||action==='restart')&&!confirm((action==='stop'?'Stop':'Restart')+' the LocalMCP Agent? Active MCP connections will be interrupted.'))return;
+    try{await api('/api/agent/'+action,{confirm:action==='start'||action==='stop'||action==='restart'});await load();message('Agent '+action+' completed.');}
+    catch(error){message(error.message,true);}
   };
-  document.querySelectorAll('button[data-minutes]').forEach(button=>{
-    button.addEventListener('click',async()=>{
-      try{
-        await api('/api/unlock',{minutes:Number(button.dataset.minutes)});
-        await load();
-        message('LocalMCP unlocked.');
-      }catch(error){message(error.message,true);}
-    });
-  });
-  $('lock').addEventListener('click',async()=>{
-    try{await api('/api/lock');await load();message('LocalMCP locked.');}
-    catch(error){message(error.message,true);}
-  });
-  $('reload').addEventListener('click',async()=>{
-    try{await api('/api/reload');await load();message('Configuration reloaded.');}
-    catch(error){message(error.message,true);}
-  });
+  $('agentStart').addEventListener('click',()=>agentAction('start'));
+  $('agentStop').addEventListener('click',()=>agentAction('stop'));
+  $('agentRestart').addEventListener('click',()=>agentAction('restart'));
+  document.querySelectorAll('button[data-minutes]').forEach(button=>button.addEventListener('click',async()=>{
+    try{await api('/api/unlock',{minutes:Number(button.dataset.minutes)});await load();message('LocalMCP unlocked.');}catch(error){message(error.message,true);}
+  }));
+  $('lock').addEventListener('click',async()=>{try{await api('/api/lock');await load();message('LocalMCP locked.');}catch(error){message(error.message,true);}});
+  $('reload').addEventListener('click',async()=>{try{await api('/api/reload');await load();message('Configuration reloaded.');}catch(error){message(error.message,true);}});
   $('rotate').addEventListener('click',async()=>{
     if(!confirm('Rotate LocalMCP credentials? Existing connections may be interrupted.'))return;
-    try{await api('/api/rotate',{confirm:true});await load();message('Credentials rotated.');}
-    catch(error){message(error.message,true);}
+    try{await api('/api/rotate',{confirm:true});await load();message('Credentials rotated.');}catch(error){message(error.message,true);}
   });
   $('reveal').addEventListener('click',async()=>{
     if(!confirm('The full MCP URL is a credential. Reveal and copy it locally?'))return;
-    try{
-      const data=await api('/api/reveal-url',{confirm:true});
-      const input=$('revealed');
-      input.hidden=false;
-      input.value=data.url;
-      try{await navigator.clipboard.writeText(data.url);message('MCP URL revealed and copied.');}
-      catch{message('MCP URL revealed. Clipboard access was unavailable.');}
-    }catch(error){message(error.message,true);}
+    try{const data=await api('/api/reveal-url',{confirm:true});const input=$('revealed');input.hidden=false;input.value=data.url;try{await navigator.clipboard.writeText(data.url);message('MCP URL revealed and copied.');}catch{message('MCP URL revealed. Clipboard access was unavailable.');}}catch(error){message(error.message,true);}
   });
-  document.querySelector('input[data-key="processes"]').addEventListener('change',event=>{
-    if(event.target.checked)document.querySelector('input[data-key="shell"]').checked=true;
+  $('useDefaultWorker').addEventListener('click',()=>{$('workerInput').value=DEFAULT_WORKER;});
+  $('reregisterWorker').addEventListener('click',async()=>{
+    if(workerManagedByEnv)return;
+    const workerUrl=$('workerInput').value.trim();
+    if(!confirm('Re-register this LocalMCP device with '+workerUrl+'? Local credentials will switch to the new Worker. The previous Worker registration may remain valid until it is revoked or rotated there.'))return;
+    try{await api('/api/worker/reregister',{workerUrl,confirm:true});await load();message('Worker re-registration completed.');}catch(error){message(error.message,true);}
   });
-  document.querySelector('input[data-key="shell"]').addEventListener('change',event=>{
-    if(!event.target.checked)document.querySelector('input[data-key="processes"]').checked=false;
-    $('shellWarning').classList.toggle('show',event.target.checked);
-  });
+  document.querySelector('input[data-key="processes"]').addEventListener('change',event=>{if(event.target.checked)document.querySelector('input[data-key="shell"]').checked=true;});
+  document.querySelector('input[data-key="shell"]').addEventListener('change',event=>{if(!event.target.checked)document.querySelector('input[data-key="processes"]').checked=false;});
   $('saveConfig').addEventListener('click',async()=>{
     try{
-      const features={};
-      document.querySelectorAll('#features input[data-key]').forEach(input=>{
-        features[input.dataset.key]=input.checked;
-      });
+      const features={};document.querySelectorAll('#capabilityRows input[data-key]').forEach(input=>{features[input.dataset.key]=input.checked;});
       const dangerous=['fileWrite','fileDelete','shell','processes','externalMcp'];
       const enabling=dangerous.filter(key=>!currentFeatures?.[key]&&features[key]);
       let confirmDangerous=false;
-      if(enabling.length){
-        confirmDangerous=confirm('Enable privileged capabilities: '+enabling.join(', ')+'?\n\nThese capabilities may grant remote MCP calls additional authority while LocalMCP is unlocked.');
-        if(!confirmDangerous)return;
-      }
-      await api('/api/config/update',{features,confirmDangerous});
-      await load();
-      message('Configuration saved.');
+      if(enabling.length){confirmDangerous=confirm('Enable privileged capabilities: '+enabling.join(', ')+'?\n\nThese capabilities grant additional authority while LocalMCP is unlocked.');if(!confirmDangerous)return;}
+      await api('/api/config/update',{features,confirmDangerous});await load();message('Permission profile saved.');
     }catch(error){message(error.message,true);}
   });
+  $('addWorkspace').addEventListener('click',()=>{let i=1;let name='workspace'+i;const names=new Set(currentWorkspaces.map(item=>item.name));while(names.has(name))name='workspace'+(++i);currentWorkspaces.push({name,root:''});renderWorkspaces();});
+  $('saveWorkspaces').addEventListener('click',async()=>{
+    if(!confirm('Save workspace changes? This changes the LocalMCP file-access boundary.'))return;
+    try{await api('/api/workspaces/update',{workspaces:currentWorkspaces,defaultWorkspace:currentDefaultWorkspace,confirm:true});await load();message('Workspaces saved.');}catch(error){message(error.message,true);}
+  });
+  $('refreshStatus').addEventListener('click',()=>load().catch(error=>message(error.message,true)));
   $('refreshAudit').addEventListener('click',()=>loadAudit().catch(error=>message(error.message,true)));
+  $('auditCategory').addEventListener('change',renderAudit);$('auditSearch').addEventListener('input',renderAudit);
   boot().catch(error=>message(error.message,true));
 })();
 </script>
@@ -684,6 +860,34 @@ export async function startControlUi(options:ControlUiOptions={}):Promise<Contro
 
       if(target.pathname==='/api/config/update'){
         json(res,200,await updateConfiguration(await readJsonBody(req)));
+        return;
+      }
+
+      if(target.pathname==='/api/workspaces/update'){
+        json(res,200,await updateWorkspaces(await readJsonBody(req)));
+        return;
+      }
+
+      if(
+        target.pathname==='/api/agent/start'
+        || target.pathname==='/api/agent/stop'
+        || target.pathname==='/api/agent/restart'
+      ){
+        const body=await readJsonBody(req);
+        const action=target.pathname.slice('/api/agent/'.length) as 'start'|'stop'|'restart';
+        if((action==='stop'||action==='restart')&&body.confirm!==true){
+          throw new Error(`Agent ${action} requires explicit confirmation`);
+        }
+        json(res,200,await runAgentAction(action));
+        return;
+      }
+
+      if(target.pathname==='/api/worker/reregister'){
+        const body=await readJsonBody(req);
+        if(body.confirm!==true)throw new Error('Worker re-registration requires explicit confirmation');
+        const workerUrl=parseWorkerOrigin(body);
+        await request('reregister',{workerUrl});
+        json(res,200,await statusView());
         return;
       }
 

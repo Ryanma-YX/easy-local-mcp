@@ -435,21 +435,25 @@ localmcp ui
 localmcp ui --no-open
 ```
 
-控制 UI 不会启动第二个 Agent。它作为本机控制客户端，通过现有的认证控制 IPC 调用 Agent 的 status / lock / unlock / reload / rotate 能力，并与远程 MCP 数据面保持分离。
+控制 UI 不会启动第二个 Agent。它作为本机控制客户端，通过现有的认证控制 IPC 管理 Agent 生命周期、安全状态、Worker 注册和配置，并与远程 MCP 数据面保持分离。
 
 浏览器控制 API 使用随机、短期、`HttpOnly`、`SameSite=Strict` 的本机会话 Cookie，并要求严格同源 `Origin`。`control.secret` 不会写入 URL、HTML、JavaScript、浏览器历史、普通日志或 MCP 响应。
 
-UI 支持：
+UI v2 支持：
 
-- Agent / LOCK 状态与解锁到期时间
+- Dashboard：Agent、Relay、Security、默认 Workspace 一屏总览
+- Agent Start / Stop / Restart / Reload
 - 5 / 30 / 60 分钟解锁与立即锁定
-- Workspace 与根目录查看
+- Workspace 新增、修改、删除、默认 Workspace 切换；保存前使用同一配置解析器验证目录边界
 - `files.read`、`files.write`、`files.delete`、`shell`、`processes`、`externalMcp` 配置编辑
+- 同时显示 Configured / Effective config / Current availability，明确区分“配置允许”和“当前可调用”
 - 配置校验、原子写入与运行中 Agent reload
-- Worker origin 与默认脱敏 MCP URL
+- Worker origin、连接状态、device ID 与默认脱敏 MCP URL
+- 通过 Agent 控制 IPC 显式重新注册 Worker；注册 token 不进入浏览器或普通配置文件；切换 Worker 不宣称会自动撤销旧 Worker 上的远端注册
+- `LOCALMCP_WORKER_URL` 环境覆盖存在时，UI 明确显示该来源并禁止改写 Worker
 - 显式 Reveal / Copy 完整 MCP URL
 - 显式确认后进行 credential rotation
-- 安全字段白名单方式展示近期 audit events
+- 可按类别与文本过滤的脱敏 audit history
 
 启用 Shell 时，UI 会明确提示：LocalMCP Shell 以当前 OS 用户权限执行，Workspace **不是** Shell sandbox。
 
@@ -459,6 +463,7 @@ UI 支持：
 
 ```text
 docs/tasks/LOCAL-CONTROL-UI.md
+docs/tasks/LOCAL-CONTROL-UI-V2.md
 ```
 
 ## License

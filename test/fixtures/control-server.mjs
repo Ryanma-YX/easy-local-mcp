@@ -5,9 +5,11 @@ await mkdir(stateDir,{recursive:true});
 
 let reloads=0;
 let rotations=0;
+let reregistrations=0;
 let locked=true;
 let unlockExpiresAt=null;
-const fullUrl='https://example.test/mcp/device/'+'a'.repeat(64);
+let workerUrl='https://example.test/';
+let fullUrl='https://example.test/mcp/device/'+'a'.repeat(64);
 
 let close;
 close=await serveControl(
@@ -15,11 +17,14 @@ close=await serveControl(
     status:'running',
     pid:process.pid,
     url:fullUrl,
-    config:`reloads:${reloads};rotations:${rotations}`,
+    config:`reloads:${reloads};rotations:${rotations};reregistrations:${reregistrations}`,
     log:logFile,
     ready:true,
     locked,
-    unlockExpiresAt
+    unlockExpiresAt,
+    workerUrl,
+    deviceId:'fixture-device',
+    workerManagedByEnv:false
   }),
   {
     stop:()=>{
@@ -38,6 +43,12 @@ close=await serveControl(
     },
     rotate:async()=>{
       rotations++;
+    },
+    reregister:async value=>{
+      const origin=new URL(value);
+      workerUrl=origin.origin+'/';
+      fullUrl=new URL('/mcp/device/'+'a'.repeat(64),workerUrl).href;
+      reregistrations++;
     }
   }
 );
