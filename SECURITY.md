@@ -269,7 +269,19 @@ The Node launcher accepts only a local tray binary discovered under `src-tauri/t
 
 The Tauri WebView navigation callback restricts navigation to the same loopback host and port. Tauri capabilities are empty, so the loaded Control Center page is not granted native Tauri commands. The existing Control Center Host / Origin / session / control-IPC protections remain authoritative.
 
-Closing the native window hides it to the tray. Tray Quit ends the native shell and closes only its corresponding Control Center HTTP host; it does not stop a separately running LocalMCP Agent. Source control excludes Rust `target/` output and generated schemas. Native distribution artifacts should be published separately per platform rather than committed to the repository.
+Closing the native window hides it to the tray. Tray Quit ends the native shell and closes only its corresponding Control Center HTTP host; it does not stop a separately running LocalMCP Agent. Source control excludes Rust `target/` output, generated schemas, and generated desktop bundle resources.
+
+## Windows desktop distribution
+
+The Windows NSIS build embeds a Node runtime, compiled LocalMCP `dist/`, skills, and production dependencies as application resources. End users do not need to install Node, npm, or Rust to run the packaged desktop app.
+
+When `LOCALMCP_CONTROL_URL` is absent, the Tauri shell starts the bundled Node runtime with `desktop-host`. The host creates the same loopback-only Control Center and prints only its ephemeral loopback URL to the parent process. The Rust launcher validates that URL before creating the WebView. The bundled Node process is started with the Windows `CREATE_NO_WINDOW` flag and its stderr is redirected to the application log directory.
+
+The installer resource path returned by Windows may use a verbatim `\\?\` prefix. The launcher normalizes that prefix before passing the Node script path to Node.js because Node 24 does not reliably accept a verbatim Windows path as its main script entry. The normalization changes path representation only; it does not broaden resource lookup or accept an external path.
+
+Remote MCP-triggered shell/process work also uses hidden-window process creation on Windows. This prevents transient console windows without changing captured stdout/stderr, stdin, exit codes, timeouts, or process-tree termination. External MCP stdio transport already enables `windowsHide` in the upstream MCP SDK.
+
+Native installers and executables remain build artifacts and should be published through release artifacts rather than committed to normal source history.
 
 ## Public relay trust
 

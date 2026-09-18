@@ -32,6 +32,8 @@
     "tray": "node dist/index.js tray",
     "tray:check": "node scripts/run-cargo.mjs check --manifest-path src-tauri/Cargo.toml",
     "tray:build": "node scripts/run-cargo.mjs build --release --manifest-path src-tauri/Cargo.toml",
+    "desktop:prepare": "npm run build && node scripts/prepare-desktop-bundle.mjs",
+    "desktop:bundle": "npm run desktop:prepare && node scripts/run-tauri.mjs build --bundles nsis",
     "test": "npm run build && tsx --test test/*.test.ts",
     "check": "tsc --noEmit && tsc -p worker/tsconfig.json",
     "prepack": "npm run build",
@@ -75,6 +77,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260906.1",
+    "@tauri-apps/cli": "2.11.4",
     "@types/express": "^5.0.6",
     "@types/node": "^26.4.1",
     "@types/ws": "^8.18.1",

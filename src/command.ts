@@ -4,7 +4,7 @@ export function runCommand(command: string, cwd: string, timeoutMs: number) {
     // Deliberately do not pass the server's credentials to commands.
     const env: NodeJS.ProcessEnv = {};
     for (const key of ['PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'SHELL', 'SystemRoot']) if (process.env[key]) env[key] = process.env[key];
-    const child = spawn(command, { cwd, shell: true, detached: process.platform !== 'win32', env, stdio: ['ignore','pipe','pipe'] });
+    const child = spawn(command, { cwd, shell: true, detached: process.platform !== 'win32', env, stdio: ['ignore','pipe','pipe'], windowsHide: process.platform === 'win32' });
     let output = Buffer.alloc(0), timedOut = false, truncated = false;
     const stop = () => { try { if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch {} };
     const timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);

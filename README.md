@@ -480,7 +480,25 @@ localmcp tray
 
 Tray v1 继续复用同一个 loopback Control Center 与 Agent IPC。Windows 上关闭窗口只会隐藏到托盘；托盘菜单提供 Show / Hide / Quit，左键托盘图标会重新显示窗口。Quit 会结束 Tray 并关闭对应的本地 UI host，但不会停止独立运行的 LocalMCP Agent。
 
-Tray WebView 只接受 `http://127.0.0.1:<port>/` Control Center URL，并限制页面导航继续留在同一个 loopback origin；Rust 壳不持有 MCP URL credential，也没有重新实现 unlock / rotate / config authorization。当前源码开发版不提交 `src-tauri/target/` 或预编译 `.exe`，需要在本机先运行 `npm run tray:build`。发行版的原生二进制分发留给后续 GitHub Release / 平台包阶段。
+Tray WebView 只接受 `http://127.0.0.1:<port>/` Control Center URL，并限制页面导航继续留在同一个 loopback origin；Rust 壳不持有 MCP URL credential，也没有重新实现 unlock / rotate / config authorization。源码开发版不提交 `src-tauri/target/` 或预编译 `.exe`，需要在本机先运行 `npm run tray:build`。
+
+### Windows Installer
+
+Windows 可以构建独立的 NSIS 安装包：
+
+```sh
+npm run desktop:bundle
+```
+
+输出位于：
+
+```text
+src-tauri/target/release/bundle/nsis/LocalMCP_<version>_x64-setup.exe
+```
+
+安装版由 Tauri 原生壳作为主进程，并随安装包携带当前构建使用的 Node runtime、LocalMCP `dist/`、skills 与 production dependencies。目标 PC 不需要另外安装 Node、npm 或 Rust。首次启动时，Tauri 会用隐藏的 bundled Node 子进程启动同一个 loopback Control Center；已有的 Agent / IPC / LOCK / feature gate 安全模型保持不变。
+
+Windows 后台命令执行默认抑制控制台窗口：`run_command`、`start_process`、Agent 启动、Agent 内部 HTTP 与 Tray 子进程都使用 hidden-window 启动方式；这不会改变 stdout/stderr、stdin、退出码或进程终止语义。External MCP 的官方 SDK transport 也默认在 Windows 隐藏其子进程窗口。
 
 实现与安全设计记录见：
 
@@ -489,6 +507,7 @@ docs/tasks/LOCAL-CONTROL-UI.md
 docs/tasks/LOCAL-CONTROL-UI-V2.md
 docs/tasks/LOCAL-CONTROL-DESKTOP-V1.md
 docs/tasks/LOCAL-CONTROL-TRAY-V1.md
+docs/tasks/WINDOWS-DESKTOP-DISTRIBUTION-V1.md
 ```
 
 ## License

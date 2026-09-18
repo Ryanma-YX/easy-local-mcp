@@ -91,7 +91,7 @@ export async function startNativeTray(
       LOCALMCP_CONTROL_URL:url
     },
     stdio:'inherit',
-    windowsHide:false
+    windowsHide:true
   });
 
   const closed=new Promise<number|null>((resolveClosed,rejectClosed)=>{

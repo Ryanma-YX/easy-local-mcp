@@ -322,7 +322,8 @@ function spawnLocal(){
         LOCALMCP_TOKEN:localToken,
         LOCALMCP_INTERNAL:'1'
       },
-      stdio:['ignore','ignore','inherit']
+      stdio:['ignore','ignore','inherit'],
+      windowsHide:process.platform==='win32'
     }
   );
 }

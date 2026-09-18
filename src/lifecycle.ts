@@ -276,7 +276,8 @@ export async function control(
             {
               detached:true,
               stdio:['ignore',log.fd,log.fd],
-              env:process.env
+              env:process.env,
+              windowsHide:process.platform==='win32'
             }
           );
 

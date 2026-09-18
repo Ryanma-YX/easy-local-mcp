@@ -13,9 +13,24 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "shortDescription": "Local MCP bridge and secure desktop control center",
+    "licenseFile": "../LICENSE",
+    "resources": {
+      "resources/": ""
+    },
     "icon": [
+      "icons/icon.ico",
       "icons/icon.png"
-    ]
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      }
+    }
   }
 }

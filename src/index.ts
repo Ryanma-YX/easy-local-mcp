@@ -108,7 +108,7 @@ async function main(){
     return;
   }
 
-  if(mode==='ui'||mode==='desktop'||mode==='tray'){
+  if(mode==='ui'||mode==='desktop'||mode==='tray'||mode==='desktop-host'){
     await ensureInitialized();
     const {startControlUi}=await import('./control-ui.js');
     const rawPort=process.env.LOCALMCP_UI_PORT;
@@ -120,9 +120,10 @@ async function main(){
 
     const desktop=mode==='desktop';
     const tray=mode==='tray';
+    const desktopHost=mode==='desktop-host';
     const ui=await startControlUi({
       port,
-      openBrowser:!desktop&&!tray&&!process.argv.slice(3).includes('--no-open')
+      openBrowser:!desktop&&!tray&&!desktopHost&&!process.argv.slice(3).includes('--no-open')
     });
 
     if(tray){
@@ -157,7 +158,9 @@ async function main(){
       return;
     }
 
-    if(desktop){
+    if(desktopHost){
+      console.log(`LOCALMCP_CONTROL_URL=${ui.url}`);
+    }else if(desktop){
       const {openDesktopControl}=await import('./desktop.js');
       const launched=await openDesktopControl(ui.url);
       console.log(`LocalMCP desktop control: ${ui.url}`);
