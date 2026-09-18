@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile
@@ -139,13 +140,13 @@ test('fresh init uses a dedicated safe workspace instead of exposing the home di
   );
 
   assert.equal(
-    resolve(cfg.workspaces.project),
-    resolve(home,'.localmcp','workspace')
+    await realpath(resolve(cfg.workspaces.project)),
+    await realpath(resolve(home,'.localmcp','workspace'))
   );
 
   assert.notEqual(
-    resolve(cfg.workspaces.project),
-    resolve(home)
+    await realpath(resolve(cfg.workspaces.project)),
+    await realpath(resolve(home))
   );
 
   assert.deepEqual(

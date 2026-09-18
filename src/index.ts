@@ -13,12 +13,12 @@ import { ProcessManager } from './process.js';
 import { secureWriteFile } from './security.js';
 
 async function ensureInitialized(force=false){
-  const {access,cp,mkdir}=await import('node:fs/promises');
+  const {access,cp,mkdir,realpath}=await import('node:fs/promises');
   const {dirname,resolve}=await import('node:path');
   const {homedir}=await import('node:os');
 
   const packageRoot=resolve(dirname(fileURLToPath(import.meta.url)),'..');
-  const home=resolve(homedir());
+  const home=await realpath(resolve(homedir()));
   const configDir=resolve(home,'.localmcp');
   const target=resolve(configDir,'localmcp.json');
   const skillsTarget=resolve(configDir,'skills');
@@ -32,9 +32,12 @@ async function ensureInitialized(force=false){
   }catch(error:any){
     if(error.code!=='ENOENT')throw error;
 
-    let workspaceRoot=resolve(process.cwd());
+    let workspaceRoot=await realpath(resolve(process.cwd()));
+    const sameHome=process.platform==='win32'
+      ? workspaceRoot.toLowerCase()===home.toLowerCase()
+      : workspaceRoot===home;
 
-    if(workspaceRoot.toLowerCase()===home.toLowerCase()){
+    if(sameHome){
       workspaceRoot=resolve(configDir,'workspace');
       await mkdir(workspaceRoot,{recursive:true,mode:0o700});
     }
