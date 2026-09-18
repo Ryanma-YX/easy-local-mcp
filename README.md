@@ -111,8 +111,8 @@ Easy Local MCP
 然后：
 
 ```powershell
-git clone https://github.com/Ryanma-YX/localmcp.git
-cd localmcp
+git clone https://github.com/Ryanma-YX/easy-local-mcp.git
+cd easy-local-mcp
 
 npm ci
 npm run desktop:bundle
@@ -408,7 +408,7 @@ https://github.com/daodao97/localmcp
 
 当前维护仓库：
 
-https://github.com/Ryanma-YX/localmcp
+https://github.com/Ryanma-YX/easy-local-mcp
 
 ## License
 

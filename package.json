@@ -49,12 +49,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Ryanma-YX/localmcp.git"
+    "url": "git+https://github.com/Ryanma-YX/easy-local-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/Ryanma-YX/localmcp/issues"
+    "url": "https://github.com/Ryanma-YX/easy-local-mcp/issues"
   },
-  "homepage": "https://github.com/Ryanma-YX/localmcp#readme",
+  "homepage": "https://github.com/Ryanma-YX/easy-local-mcp#readme",
   "keywords": [
     "mcp",
     "model-context-protocol",
