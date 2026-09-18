@@ -459,11 +459,26 @@ UI v2 支持：
 
 完整 MCP URL 只会在本机用户显式确认 reveal 后返回给浏览器。控制 UI 不提供远程管理入口，也不会把 unlock、rotate 或配置管理暴露成 MCP tool。
 
+### Desktop Shell
+
+如果希望把 Control Center 作为独立应用窗口启动，而不是普通浏览器标签页：
+
+```sh
+localmcp desktop
+```
+
+Desktop Shell 仍然启动同一个仅绑定 `127.0.0.1` 的 Control Center，不引入第二套后端或授权逻辑。Windows 会优先寻找 Microsoft Edge / Google Chrome 并使用 `--app=` 模式打开独立窗口；macOS / Linux 使用对应的 Edge / Chrome / Chromium app-mode。找不到可用 app-mode 浏览器时，会退回系统默认浏览器。
+
+可通过 `LOCALMCP_DESKTOP_BROWSER` 指定 Edge/Chrome/Chromium 可执行文件或命令名。启动过程使用参数数组调用，不经过 shell 插值。Control Center 的本地 UI URL 不包含 MCP credential。
+
+当前 Desktop Shell v1 **不是系统托盘程序**：关闭浏览器 app window 不等同于停止本地 UI host。原生 Tray / Tauri 包装器仍作为后续阶段，届时继续复用同一个 Control Center 与 Agent IPC。
+
 实现与安全设计记录见：
 
 ```text
 docs/tasks/LOCAL-CONTROL-UI.md
 docs/tasks/LOCAL-CONTROL-UI-V2.md
+docs/tasks/LOCAL-CONTROL-DESKTOP-V1.md
 ```
 
 ## License

@@ -28,6 +28,7 @@
     "stdio": "node dist/index.js stdio",
     "http": "node dist/index.js http",
     "dev": "tsx src/index.ts",
+    "desktop": "node dist/index.js desktop",
     "test": "npm run build && tsx --test test/*.test.ts",
     "check": "tsc --noEmit && tsc -p worker/tsconfig.json",
     "prepack": "npm run build",

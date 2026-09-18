@@ -251,6 +251,16 @@ The UI prominently warns that enabling Shell grants OS-level command execution u
 
 The local Web UI is intended to protect against remote MCP and cross-origin web access. Like the native control IPC, it is not a security boundary against a malicious process already running as the same local OS user.
 
+## Desktop Shell
+
+`localmcp desktop` starts the same loopback-only Control Center and then attempts to open it in a dedicated Edge / Chrome / Chromium app-mode window. It does not create another HTTP listener, Agent, authorization model, credential store, or browser extension.
+
+The app-mode process is launched with `spawn` and an argument array rather than a shell command. The URL passed to the browser is only the ephemeral local Control Center URL and contains no MCP credential or control secret. `LOCALMCP_DESKTOP_BROWSER` is treated as a local OS-user process-launch preference; it is never accepted from the remote MCP data plane.
+
+If no supported app-mode browser is available, Desktop Shell falls back to the platform's normal URL opener. This fallback does not weaken the existing loopback / Host / Origin / session checks.
+
+Desktop Shell v1 is not a native system tray. A future native wrapper must continue to reuse the same Control Center and authenticated Agent IPC instead of adding a second privileged backend.
+
 ## Public relay trust
 
 The default public Worker is convenient, but it is part of the trusted computing base.
