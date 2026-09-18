@@ -503,7 +503,7 @@ header{display:flex;justify-content:space-between;gap:20px;align-items:flex-star
 .metric{padding:14px 16px}.metric-label{font-size:12px;color:#667085}.metric-value{margin-top:5px;font-size:17px;font-weight:750;word-break:break-word}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.card{padding:18px}.wide{grid-column:1/-1}
 .row{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid #edf0f4}.row:last-child{border-bottom:0}.label{color:#667085}.value{font-weight:650;text-align:right;word-break:break-all}
-.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}button{border:1px solid #cfd6e2;background:#fff;border-radius:9px;padding:8px 12px;font-weight:650;cursor:pointer;color:#27364b}button.primary{background:#172b4d;border-color:#172b4d;color:#fff}button.danger{border-color:#f0a3a3;color:#b42318}button:disabled{opacity:.45;cursor:not-allowed}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}#securityBadge{align-items:center;justify-content:center;align-self:center;line-height:1}button{border:1px solid #cfd6e2;background:#fff;border-radius:9px;padding:8px 12px;font-weight:650;cursor:pointer;color:#27364b}button.primary{background:#172b4d;border-color:#172b4d;color:#fff}button.danger{border-color:#f0a3a3;color:#b42318}button:disabled{opacity:.45;cursor:not-allowed}
 .badge{display:inline-flex;padding:4px 8px;border-radius:999px;background:#eef2f6;font-size:12px;font-weight:750}.badge.ok{background:#e9f8ef;color:#067647}.badge.warn{background:#fff4e5;color:#b54708}.badge.bad{background:#feecec;color:#b42318}
 .muted{font-size:12px;color:#7b8697}.path{font:12px ui-monospace,SFMono-Regular,Consolas,monospace;color:#475467;word-break:break-all}
 .warning{margin-top:12px;padding:11px 12px;border-radius:10px;background:#fff4e5;color:#7a4b00;font-size:13px;font-weight:600}
@@ -520,7 +520,7 @@ input[type="text"],select{width:100%;border:1px solid #cfd6e2;border-radius:8px;
 <div class="shell">
 <header>
   <div><h1>LocalMCP Control Center</h1><p>Local-only administration over the existing authenticated control plane.</p></div>
-  <div class="actions" style="margin-top:0"><button id="refreshStatus">Refresh</button><span id="securityBadge" class="badge">Connecting…</span></div>
+  <div class="header-actions"><button id="refreshStatus">Refresh</button><span id="securityBadge" class="badge">Connecting…</span></div>
 </header>
 
 <div class="summary">
