@@ -259,7 +259,17 @@ The app-mode process is launched with `spawn` and an argument array rather than 
 
 If no supported app-mode browser is available, Desktop Shell falls back to the platform's normal URL opener. This fallback does not weaken the existing loopback / Host / Origin / session checks.
 
-Desktop Shell v1 is not a native system tray. A future native wrapper must continue to reuse the same Control Center and authenticated Agent IPC instead of adding a second privileged backend.
+Desktop Shell v1 is not a native system tray. It remains available as the zero-native-dependency fallback.
+
+## Native Tray Shell
+
+`localmcp tray` starts the same loopback-only Control Center and then launches a thin Tauri 2 native shell. The Rust process is only a window/tray host; it does not implement Agent authorization, hold MCP credentials, expose a second privileged backend, or create a LAN/public listener.
+
+The Node launcher accepts only a local tray binary discovered under `src-tauri/target/{release,debug}` or an explicit local `LOCALMCP_TRAY_BINARY`. It passes only the ephemeral Control Center URL through `LOCALMCP_CONTROL_URL`. Both the Node launcher and Rust shell require the URL to use `http://127.0.0.1:<port>/` with no credentials, query, or fragment.
+
+The Tauri WebView navigation callback restricts navigation to the same loopback host and port. Tauri capabilities are empty, so the loaded Control Center page is not granted native Tauri commands. The existing Control Center Host / Origin / session / control-IPC protections remain authoritative.
+
+Closing the native window hides it to the tray. Tray Quit ends the native shell and closes only its corresponding Control Center HTTP host; it does not stop a separately running LocalMCP Agent. Source control excludes Rust `target/` output and generated schemas. Native distribution artifacts should be published separately per platform rather than committed to the repository.
 
 ## Public relay trust
 

@@ -471,7 +471,16 @@ Desktop Shell 仍然启动同一个仅绑定 `127.0.0.1` 的 Control Center，�
 
 可通过 `LOCALMCP_DESKTOP_BROWSER` 指定 Edge/Chrome/Chromium 可执行文件或命令名。启动过程使用参数数组调用，不经过 shell 插值。Control Center 的本地 UI URL 不包含 MCP credential。
 
-当前 Desktop Shell v1 **不是系统托盘程序**：关闭浏览器 app window 不等同于停止本地 UI host。原生 Tray / Tauri 包装器仍作为后续阶段，届时继续复用同一个 Control Center 与 Agent IPC。
+Desktop Shell v1 仍然只是浏览器 app-mode 包装；如果需要真正的系统托盘，可以使用 Tauri Tray v1：
+
+```sh
+npm run tray:build
+localmcp tray
+```
+
+Tray v1 继续复用同一个 loopback Control Center 与 Agent IPC。Windows 上关闭窗口只会隐藏到托盘；托盘菜单提供 Show / Hide / Quit，左键托盘图标会重新显示窗口。Quit 会结束 Tray 并关闭对应的本地 UI host，但不会停止独立运行的 LocalMCP Agent。
+
+Tray WebView 只接受 `http://127.0.0.1:<port>/` Control Center URL，并限制页面导航继续留在同一个 loopback origin；Rust 壳不持有 MCP URL credential，也没有重新实现 unlock / rotate / config authorization。当前源码开发版不提交 `src-tauri/target/` 或预编译 `.exe`，需要在本机先运行 `npm run tray:build`。发行版的原生二进制分发留给后续 GitHub Release / 平台包阶段。
 
 实现与安全设计记录见：
 
@@ -479,6 +488,7 @@ Desktop Shell 仍然启动同一个仅绑定 `127.0.0.1` 的 Control Center，�
 docs/tasks/LOCAL-CONTROL-UI.md
 docs/tasks/LOCAL-CONTROL-UI-V2.md
 docs/tasks/LOCAL-CONTROL-DESKTOP-V1.md
+docs/tasks/LOCAL-CONTROL-TRAY-V1.md
 ```
 
 ## License

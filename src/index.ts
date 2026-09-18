@@ -108,7 +108,7 @@ async function main(){
     return;
   }
 
-  if(mode==='ui'||mode==='desktop'){
+  if(mode==='ui'||mode==='desktop'||mode==='tray'){
     await ensureInitialized();
     const {startControlUi}=await import('./control-ui.js');
     const rawPort=process.env.LOCALMCP_UI_PORT;
@@ -119,10 +119,43 @@ async function main(){
     }
 
     const desktop=mode==='desktop';
+    const tray=mode==='tray';
     const ui=await startControlUi({
       port,
-      openBrowser:!desktop&&!process.argv.slice(3).includes('--no-open')
+      openBrowser:!desktop&&!tray&&!process.argv.slice(3).includes('--no-open')
     });
+
+    if(tray){
+      const {startNativeTray}=await import('./tray.js');
+      const session=await startNativeTray(ui.url);
+      console.log(`LocalMCP tray control: ${ui.url}`);
+      console.log(`Tray binary: ${session.command}`);
+
+      const close=()=>{
+        session.child.kill();
+        void ui.close();
+      };
+
+      process.once('SIGINT',close);
+      process.once('SIGTERM',close);
+
+      const outcome=await Promise.race([
+        session.closed.then(code=>({kind:'tray' as const,code})),
+        ui.closed.then(()=>({kind:'ui' as const}))
+      ]);
+
+      if(outcome.kind==='ui'){
+        session.child.kill();
+        await session.closed.catch(()=>null);
+      }else{
+        await ui.close();
+        if(outcome.code!==0){
+          throw new Error(`LocalMCP tray exited with code ${outcome.code??'unknown'}`);
+        }
+      }
+
+      return;
+    }
 
     if(desktop){
       const {openDesktopControl}=await import('./desktop.js');
@@ -213,7 +246,7 @@ async function main(){
 
   if(!['stdio','http'].includes(mode)){
     throw new Error(
-      'Usage: localmcp [start|status|url|unlock|lock|rotate|stop|reload|ui|desktop|init|agent|stdio|http]'
+      'Usage: localmcp [start|status|url|unlock|lock|rotate|stop|reload|ui|desktop|tray|init|agent|stdio|http]'
     );
   }
 

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "LocalMCP",
+  "version": "0.3.9",
+  "identifier": "dev.localmcp.control",
+  "build": {
+    "frontendDist": "../src-tauri-placeholder"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "capabilities": []
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "icons/icon.png"
+    ]
+  }
+}
