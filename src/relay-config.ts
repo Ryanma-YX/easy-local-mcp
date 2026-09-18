@@ -111,7 +111,7 @@ export async function ensureRelayConfigured(){
   }
 
   throw new Error(
-    'Relay is not configured. Open the LocalMCP Control Center and choose a Relay before starting the Agent.'
+    'Relay is not configured. Open the Easy Local MCP Control Center and choose a Relay before starting the Agent.'
   );
 }
 
@@ -119,7 +119,7 @@ export async function configuredRelayUrl(){
   const state=await relaySetupState();
   if(!state.configured||!state.workerUrl){
     throw new Error(
-      'Relay is not configured. Open the LocalMCP Control Center and choose a Relay before starting the Agent.'
+      'Relay is not configured. Open the Easy Local MCP Control Center and choose a Relay before starting the Agent.'
     );
   }
   return state.workerUrl;

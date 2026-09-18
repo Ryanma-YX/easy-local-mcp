@@ -43,12 +43,12 @@ export interface Config {
 function parseConfig(raw:unknown,path:string):FileConfig{
  const result=localMcpConfigSchema.safeParse(raw);if(result.success)return result.data;
  const details=result.error.issues.map(i=>`${i.path.join('.')||'<root>'}: ${i.message}`).join('; ');
- throw new Error(`Invalid LocalMCP config ${path}: ${details}`);
+ throw new Error(`Invalid Easy Local MCP config ${path}: ${details}`);
 }
 async function readConfig():Promise<{value:FileConfig;base:string;path?:string}>{
  const explicit=process.env.LOCALMCP_CONFIG,path=explicit?resolve(explicit):resolve(homedir(),'.localmcp','localmcp.json');
  try{return {value:parseConfig(JSON.parse(await readFile(path,'utf8')),path),base:dirname(path),path};}
- catch(e:any){if(e instanceof SyntaxError)throw new Error(`Invalid JSON in LocalMCP config ${path}: ${e.message}`);if(e.code!=='ENOENT')throw e;return {value:localMcpConfigSchema.parse({}),base:homedir()};}
+ catch(e:any){if(e instanceof SyntaxError)throw new Error(`Invalid JSON in Easy Local MCP config ${path}: ${e.message}`);if(e.code!=='ENOENT')throw e;return {value:localMcpConfigSchema.parse({}),base:homedir()};}
 }
 export function configFilePath(){return resolve(process.env.LOCALMCP_CONFIG||resolve(homedir(),'.localmcp','localmcp.json'));}
 export async function config(snapshot?:{content:string;path:string}):Promise<Config>{

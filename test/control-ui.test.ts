@@ -46,7 +46,7 @@ async function waitForUi(
 
     child.stdout?.on('data',data=>{
       output+=data.toString();
-      const match=/LocalMCP control UI: (http:\/\/127\.0\.0\.1:\d+\/)/.exec(output);
+      const match=/Easy Local MCP control UI: (http:\/\/127\.0\.0\.1:\d+\/)/.exec(output);
       if(match){
         clearTimeout(timer);
         done(match[1]);
@@ -177,7 +177,7 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
   assert.equal(page.status,200);
   const html=await page.text();
 
-  assert.match(html,/LocalMCP Control Center/);
+  assert.match(html,/Easy Local MCP Control Center/);
   assert.match(html,/do not sandbox shell commands/);
   assert.match(html,/Agent lifecycle/);
   assert.match(html,/Re-register Worker/);
@@ -490,7 +490,7 @@ test('fresh Control Center requires explicit Relay setup before Agent start',{ti
   const origin=new URL(uiUrl).origin;
   const page=await fetch(uiUrl);
   const html=await page.text();
-  assert.match(html,/Choose a Relay before starting LocalMCP/);
+  assert.match(html,/Choose a Relay before starting Easy Local MCP/);
   assert.match(html,/Save & Start Agent/);
   const inlineScript=/<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
   assert.ok(inlineScript);

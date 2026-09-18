@@ -14,7 +14,7 @@ The following background paths now suppress Windows console windows:
 
 - `run_command`
 - `start_process`
-- LocalMCP Agent startup
+- Easy Local MCP Agent startup
 - Agent internal HTTP child process
 - native Tray child process
 
@@ -43,8 +43,8 @@ The NSIS installer contains:
 
 - Tauri 2 native shell
 - bundled Node runtime
-- LocalMCP compiled `dist/`
-- LocalMCP skills
+- Easy Local MCP compiled `dist/`
+- Easy Local MCP skills
 - production npm dependencies
 - Node.js license metadata
 
@@ -63,7 +63,7 @@ npm run desktop:bundle
 Output:
 
 ```text
-src-tauri/target/release/bundle/nsis/LocalMCP_<version>_x64-setup.exe
+src-tauri/target/release/bundle/nsis/Easy Local MCP_<version>_x64-setup.exe
 ```
 
 ## Bundled startup flow
@@ -94,15 +94,15 @@ src-tauri/resources/
 
 Only `.gitkeep` is tracked. Generated content is ignored by Git.
 
-The prepare script copies the current Node runtime and LocalMCP app files, then installs production dependencies using the lockfile.
+The prepare script copies the current Node runtime and Easy Local MCP app files, then installs production dependencies using the lockfile.
 
 ## Installer smoke test
 
-The NSIS installer was installed silently into an isolated worktree directory rather than over the active npm-linked LocalMCP installation.
+The NSIS installer was installed silently into an isolated worktree directory rather than over the active npm-linked Easy Local MCP installation.
 
 The installation contained:
 
-- `localmcp-tray.exe`
+- `easy-local-mcp-tray.exe`
 - `runtime/node.exe`
 - `app/dist/index.js`
 - production `node_modules`

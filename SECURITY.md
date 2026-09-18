@@ -1,8 +1,8 @@
-# LocalMCP Security Model
+# Easy Local MCP Security Model
 
-LocalMCP is a **privileged local agent**. It runs with the permissions of the current operating-system user and can expose capabilities such as filesystem mutation, shell execution, persistent processes, and external MCP servers.
+Easy Local MCP is a **privileged local agent**. It runs with the permissions of the current operating-system user and can expose capabilities such as filesystem mutation, shell execution, persistent processes, and external MCP servers.
 
-Enabling a capability is therefore equivalent to granting a remote MCP caller access to that capability under the current OS user's authority. Treat LocalMCP configuration, credentials, the local control channel, and the relay as security-sensitive infrastructure.
+Enabling a capability is therefore equivalent to granting a remote MCP caller access to that capability under the current OS user's authority. Treat Easy Local MCP configuration, credentials, the local control channel, and the relay as security-sensitive infrastructure.
 
 ## Trust boundaries
 
@@ -24,7 +24,7 @@ Security boundaries:
 3. The relay terminates TLS and can observe relayed MCP request/response plaintext.
 4. The Agent-to-loopback HTTP hop is local-only and authenticated with an ephemeral token.
 5. Filesystem workspace boundaries apply to filesystem tools only.
-6. Shell commands and external MCP servers run with the LocalMCP process user's OS permissions.
+6. Shell commands and external MCP servers run with the Easy Local MCP process user's OS permissions.
 7. The local control IPC endpoint is the privileged management plane and is not exposed as an MCP tool.
 
 The current architecture does **not** provide end-to-end encryption between ChatGPT and the local Agent.
@@ -33,7 +33,7 @@ For sensitive development environments, prefer a self-hosted Worker whose operat
 
 ## Secure defaults
 
-Fresh initialization uses the directory from which LocalMCP is initialized as the explicit workspace. If initialization is started from the user's home directory, LocalMCP creates a dedicated `~/.localmcp/workspace` instead of exposing the whole home directory.
+Fresh initialization uses the directory from which Easy Local MCP is initialized as the explicit workspace. If initialization is started from the user's home directory, Easy Local MCP creates a dedicated `~/.localmcp/workspace` instead of exposing the whole home directory.
 
 Fresh configuration defaults to:
 
@@ -145,7 +145,7 @@ Therefore shell execution is:
 1. explicit opt-in in configuration, and
 2. unavailable until the Agent is locally unlocked.
 
-LocalMCP does not attempt to provide a cross-platform shell sandbox in this version.
+Easy Local MCP does not attempt to provide a cross-platform shell sandbox in this version.
 
 ## External MCP servers
 
@@ -155,7 +155,7 @@ They are started lazily only when an authorized operation needs them. Merely lis
 
 External MCP tool descriptions, schemas, and annotations are treated as untrusted metadata. They do not grant authority and are never used as the authorization boundary.
 
-A configured external MCP server can execute with the same OS authority as the LocalMCP process. Review the server and its command line before enabling it.
+A configured external MCP server can execute with the same OS authority as the Easy Local MCP process. Review the server and its command line before enabling it.
 
 ## Credentials
 
@@ -168,11 +168,11 @@ Sensitive files include:
 - `control.secret`
 - transient unlock state
 
-LocalMCP writes sensitive state with restrictive permissions where supported.
+Easy Local MCP writes sensitive state with restrictive permissions where supported.
 
 On POSIX systems, files are written with restrictive modes.
 
-On Windows, LocalMCP additionally makes a best-effort attempt to restrict the file ACL with `icacls`. POSIX mode flags alone are **not** a Windows ACL security boundary. If ACL hardening cannot be applied, LocalMCP warns but continues running.
+On Windows, Easy Local MCP additionally makes a best-effort attempt to restrict the file ACL with `icacls`. POSIX mode flags alone are **not** a Windows ACL security boundary. If ACL hardening cannot be applied, Easy Local MCP warns but continues running.
 
 ### MCP URL
 
@@ -206,7 +206,7 @@ localmcp rotate
 
 For the device-based Worker model, rotation replaces both Agent and MCP credentials in the Durable Object and disconnects existing Agent WebSockets. Previous credentials no longer authenticate after successful rotation.
 
-Legacy single-user Worker deployments do not provide the same device-scoped rotation path. LocalMCP reports that limitation instead of claiming rotation succeeded.
+Legacy single-user Worker deployments do not provide the same device-scoped rotation path. Easy Local MCP reports that limitation instead of claiming rotation succeeded.
 
 ## Local control IPC
 
@@ -249,7 +249,7 @@ Worker re-registration is performed by the Agent through authenticated control I
 
 Recent audit events are projected through a safe field allowlist before display. Secret/token/credential fields, URLs, raw shell commands, stdout/stderr, file contents, and arbitrary payloads are not exposed by the audit viewer.
 
-The UI prominently warns that enabling Shell grants OS-level command execution under the LocalMCP process user's authority and that Workspace boundaries are not a Shell sandbox.
+The UI prominently warns that enabling Shell grants OS-level command execution under the Easy Local MCP process user's authority and that Workspace boundaries are not a Shell sandbox.
 
 The local Web UI is intended to protect against remote MCP and cross-origin web access. Like the native control IPC, it is not a security boundary against a malicious process already running as the same local OS user.
 
@@ -271,11 +271,11 @@ The Node launcher accepts only a local tray binary discovered under `src-tauri/t
 
 The Tauri WebView navigation callback restricts navigation to the same loopback host and port. Tauri capabilities are empty, so the loaded Control Center page is not granted native Tauri commands. The existing Control Center Host / Origin / session / control-IPC protections remain authoritative.
 
-Closing the native window hides it to the tray. Tray Quit ends the native shell and closes only its corresponding Control Center HTTP host; it does not stop a separately running LocalMCP Agent. Source control excludes Rust `target/` output, generated schemas, and generated desktop bundle resources.
+Closing the native window hides it to the tray. Tray Quit ends the native shell and closes only its corresponding Control Center HTTP host; it does not stop a separately running Easy Local MCP Agent. Source control excludes Rust `target/` output, generated schemas, and generated desktop bundle resources.
 
 ## Windows desktop distribution
 
-The Windows NSIS build embeds a Node runtime, compiled LocalMCP `dist/`, skills, and production dependencies as application resources. End users do not need to install Node, npm, or Rust to run the packaged desktop app.
+The Windows NSIS build embeds a Node runtime, compiled Easy Local MCP `dist/`, skills, and production dependencies as application resources. End users do not need to install Node, npm, or Rust to run the packaged desktop app.
 
 When `LOCALMCP_CONTROL_URL` is absent, the Tauri shell starts the bundled Node runtime with `desktop-host`. The host creates the same loopback-only Control Center and prints only its ephemeral loopback URL to the parent process. The Rust launcher validates that URL before creating the WebView. The bundled Node process is started with the Windows `CREATE_NO_WINDOW` flag and its stderr is redirected to the application log directory.
 
@@ -289,7 +289,7 @@ Native installers and executables remain build artifacts and should be published
 
 The default public Worker is convenient, but it is part of the trusted computing base.
 
-It terminates TLS and relays MCP payloads in plaintext inside the Worker execution environment. LocalMCP does not claim end-to-end encryption between ChatGPT and the local Agent.
+It terminates TLS and relays MCP payloads in plaintext inside the Worker execution environment. Easy Local MCP does not claim end-to-end encryption between ChatGPT and the local Agent.
 
 For repositories, credentials, source code, or environments with elevated confidentiality requirements, self-host the Worker and control its Cloudflare account, routes, secrets, and access policy.
 
@@ -355,7 +355,7 @@ Audit logging intentionally excludes:
 - raw shell command strings
 - arbitrary secret-bearing payloads
 
-Audit failure must not crash normal LocalMCP operation.
+Audit failure must not crash normal Easy Local MCP operation.
 
 ## Incident response
 
@@ -367,7 +367,7 @@ If a credential may have been exposed:
 4. review `~/.localmcp/audit.log`
 5. restart the Agent to force a LOCKED state
 
-If the local OS account itself is compromised, LocalMCP's local lock and state-file protections are not a substitute for operating-system account security.
+If the local OS account itself is compromised, Easy Local MCP's local lock and state-file protections are not a substitute for operating-system account security.
 
 ## Known limitations
 
@@ -375,4 +375,4 @@ If the local OS account itself is compromised, LocalMCP's local lock and state-f
 - External MCP servers run with the current OS user's authority.
 - The Worker relay is trusted infrastructure, not end-to-end encrypted transport.
 - Windows ACL hardening is best effort and depends on the host environment.
-- The lock gate protects privileged LocalMCP operations from remote use; it is not designed to defend against a malicious process already running as the same local OS user.
+- The lock gate protects privileged Easy Local MCP operations from remote use; it is not designed to defend against a malicious process already running as the same local OS user.

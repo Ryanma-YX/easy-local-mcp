@@ -90,7 +90,7 @@ export async function request(
     let data='';
 
     const timer=setTimeout(
-      ()=>socket.destroy(new Error('LocalMCP control request timed out')),
+      ()=>socket.destroy(new Error('Easy Local MCP control request timed out')),
       20000
     );
 
@@ -118,7 +118,7 @@ export async function request(
       try{
         if(!data){
           throw Object.assign(
-            new Error('LocalMCP control connection closed'),
+            new Error('Easy Local MCP control connection closed'),
             {code:'ECONNRESET'}
           );
         }
@@ -172,7 +172,7 @@ export function printStatus(value:Status){
 
 export function printUrl(value:Status){
   if(value.status!=='running'||!value.url){
-    throw new Error('LocalMCP is not running or has no MCP URL');
+    throw new Error('Easy Local MCP is not running or has no MCP URL');
   }
 
   console.log(value.url);
@@ -216,7 +216,7 @@ async function locked<T>(action:()=>Promise<T>):Promise<T>{
       }
 
       if(Date.now()>deadline){
-        throw new Error(`Another LocalMCP command is still running (${lockFile})`);
+        throw new Error(`Another Easy Local MCP command is still running (${lockFile})`);
       }
 
       await pause(100);
@@ -239,11 +239,11 @@ export async function control(
 
     if(command==='reload'){
       if(current.status==='stopped'){
-        throw new Error('LocalMCP is stopped; run localmcp to start it');
+        throw new Error('Easy Local MCP is stopped; run easy-local-mcp to start it');
       }
 
       current=await request('reload');
-      console.log('LocalMCP configuration reloaded.');
+      console.log('Easy Local MCP configuration reloaded.');
     }else if(command==='stop'){
       if(current.status==='running'){
         await request('stop');
@@ -255,7 +255,7 @@ export async function control(
         }
 
         if(current.status!=='stopped'){
-          throw new Error(`LocalMCP did not stop; see ${logFile}`);
+          throw new Error(`Easy Local MCP did not stop; see ${logFile}`);
         }
       }
     }else{
@@ -298,12 +298,12 @@ export async function control(
 
       while(!current.ready){
         if(child&&(child.exitCode!==null||child.signalCode!==null)){
-          throw new Error(`LocalMCP startup failed; see ${logFile}`);
+          throw new Error(`Easy Local MCP startup failed; see ${logFile}`);
         }
 
         if(Date.now()>deadline){
           child?.kill('SIGTERM');
-          throw new Error(`LocalMCP startup timed out; see ${logFile}`);
+          throw new Error(`Easy Local MCP startup timed out; see ${logFile}`);
         }
 
         await pause(100);

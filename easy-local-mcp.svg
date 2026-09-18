@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="frame" x1="120" y1="100" x2="910" y2="930" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#52F4FF"/>
+      <stop offset=".48" stop-color="#138BFF"/>
+      <stop offset="1" stop-color="#7457FF"/>
+    </linearGradient>
+    <linearGradient id="stroke" x1="220" y1="240" x2="820" y2="790" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#75FBFF"/>
+      <stop offset=".5" stop-color="#1692FF"/>
+      <stop offset="1" stop-color="#7B5CFF"/>
+    </linearGradient>
+    <radialGradient id="panel" cx=".35" cy=".2" r=".95">
+      <stop stop-color="#124CA9"/>
+      <stop offset=".45" stop-color="#0A2B72"/>
+      <stop offset="1" stop-color="#061638"/>
+    </radialGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="12" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="20" stdDeviation="26" flood-color="#00112F" flood-opacity=".6"/>
+    </filter>
+  </defs>
+
+  <rect x="92" y="92" width="840" height="840" rx="210" fill="url(#panel)" stroke="url(#frame)" stroke-width="36" filter="url(#shadow)"/>
+  <rect x="126" y="126" width="772" height="772" rx="178" stroke="#78EFFF" stroke-opacity=".14" stroke-width="8"/>
+
+  <!-- Protocol / MCP network mark -->
+  <path d="M250 384L430 490C482 520 542 520 594 490L774 384" stroke="url(#stroke)" stroke-width="72" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+  <path d="M250 384V664" stroke="url(#stroke)" stroke-width="72" stroke-linecap="round"/>
+  <path d="M774 384V664" stroke="url(#stroke)" stroke-width="72" stroke-linecap="round"/>
+  <path d="M312 360L500 246C508 241 516 241 524 246L712 360" stroke="url(#stroke)" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- nodes -->
+  <circle cx="250" cy="684" r="64" fill="url(#stroke)" stroke="#9EFFFF" stroke-width="10"/>
+  <circle cx="774" cy="684" r="64" fill="url(#stroke)" stroke="#9EFFFF" stroke-width="10"/>
+  <circle cx="512" cy="230" r="62" fill="url(#stroke)" stroke="#A5FFFF" stroke-width="10"/>
+
+  <!-- secure local core -->
+  <path d="M406 596L470 558C496 543 528 543 554 558L618 596V728L554 766C528 781 496 781 470 766L406 728V596Z"
+        fill="#08245C" stroke="url(#stroke)" stroke-width="28" stroke-linejoin="round"/>
+  <path d="M370 586L420 556M654 586L604 556" stroke="url(#stroke)" stroke-width="28" stroke-linecap="round"/>
+
+  <!-- local computer -->
+  <rect x="454" y="620" width="116" height="82" rx="18" stroke="#71F4FF" stroke-width="16"/>
+  <path d="M438 724H586" stroke="#71F4FF" stroke-width="16" stroke-linecap="round"/>
+  <path d="M512 644L536 654V675C536 691 526 703 512 710C498 703 488 691 488 675V654L512 644Z" fill="#D9FFFF"/>
+
+  <!-- subtle protocol sparks -->
+  <circle cx="336" cy="282" r="9" fill="#61F8FF"/>
+  <circle cx="694" cy="260" r="7" fill="#5FC3FF"/>
+  <circle cx="826" cy="520" r="8" fill="#8974FF"/>
+</svg>

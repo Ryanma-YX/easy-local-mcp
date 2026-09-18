@@ -40,7 +40,7 @@ impl Drop for HostProcess {
 
 fn parse_control_url(raw: &str) -> Result<Url, String> {
     let url = Url::parse(raw)
-        .map_err(|error| format!("Invalid LocalMCP Control Center URL: {error}"))?;
+        .map_err(|error| format!("Invalid Easy Local MCP Control Center URL: {error}"))?;
 
     let allowed =
         url.scheme() == "http"
@@ -88,7 +88,7 @@ fn start_bundled_host(app: &tauri::AppHandle) -> Result<(Url, Child), String> {
     }
 
     if !script.is_file() {
-        return Err(format!("Bundled LocalMCP host not found: {}", script.display()));
+        return Err(format!("Bundled Easy Local MCP host not found: {}", script.display()));
     }
 
     let home = app.path().home_dir().map_err(|error| error.to_string())?;
@@ -129,11 +129,11 @@ fn start_bundled_host(app: &tauri::AppHandle) -> Result<(Url, Child), String> {
 
     let mut child = command
         .spawn()
-        .map_err(|error| format!("Unable to start bundled LocalMCP host: {error}"))?;
+        .map_err(|error| format!("Unable to start bundled Easy Local MCP host: {error}"))?;
     let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| "Bundled LocalMCP host stdout is unavailable".to_string())?;
+        .ok_or_else(|| "Bundled Easy Local MCP host stdout is unavailable".to_string())?;
 
     let (sender, receiver) = mpsc::channel::<String>();
     thread::spawn(move || {
@@ -155,7 +155,7 @@ fn start_bundled_host(app: &tauri::AppHandle) -> Result<(Url, Child), String> {
         if now >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            return Err("Timed out waiting for bundled LocalMCP Control Center".to_string());
+            return Err("Timed out waiting for bundled Easy Local MCP Control Center".to_string());
         }
 
         let remaining = deadline.saturating_duration_since(now);
@@ -169,11 +169,11 @@ fn start_bundled_host(app: &tauri::AppHandle) -> Result<(Url, Child), String> {
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err("Timed out waiting for bundled LocalMCP Control Center".to_string());
+                return Err("Timed out waiting for bundled Easy Local MCP Control Center".to_string());
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 let status = child.try_wait().ok().flatten();
-                return Err(format!("Bundled LocalMCP host exited before it became ready: {status:?}"));
+                return Err(format!("Bundled Easy Local MCP host exited before it became ready: {status:?}"));
             }
         }
     }
@@ -214,7 +214,7 @@ fn main() {
                 "main",
                 WebviewUrl::External(control.clone()),
             )
-            .title("LocalMCP Control Center")
+            .title("Easy Local MCP Control Center")
             .inner_size(1180.0, 820.0)
             .min_inner_size(860.0, 620.0)
             .center()
@@ -251,14 +251,14 @@ fn main() {
             let quit = MenuItem::with_id(
                 app,
                 "quit",
-                "Quit LocalMCP Desktop",
+                "Quit Easy Local MCP Desktop",
                 true,
                 None::<&str>,
             )?;
             let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
 
             let mut tray = TrayIconBuilder::new()
-                .tooltip("LocalMCP")
+                .tooltip("Easy Local MCP")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -291,5 +291,5 @@ fn main() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running LocalMCP tray");
+        .expect("error while running Easy Local MCP tray");
 }

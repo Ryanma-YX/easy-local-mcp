@@ -149,7 +149,7 @@ export default {
     if(url.pathname==='/healthz'&&request.method==='GET'){
       return json({
         ok:true,
-        service:'localmcp-relay',
+        service:'easy-local-mcp-relay',
         registration:true,
         registrationProtected:!!env.REGISTRATION_TOKEN_HASH
       });

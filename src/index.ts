@@ -129,7 +129,7 @@ async function main(){
     if(tray){
       const {startNativeTray}=await import('./tray.js');
       const session=await startNativeTray(ui.url);
-      console.log(`LocalMCP tray control: ${ui.url}`);
+      console.log(`Easy Local MCP tray control: ${ui.url}`);
       console.log(`Tray binary: ${session.command}`);
 
       const close=()=>{
@@ -151,7 +151,7 @@ async function main(){
       }else{
         await ui.close();
         if(outcome.code!==0){
-          throw new Error(`LocalMCP tray exited with code ${outcome.code??'unknown'}`);
+          throw new Error(`Easy Local MCP tray exited with code ${outcome.code??'unknown'}`);
         }
       }
 
@@ -163,10 +163,10 @@ async function main(){
     }else if(desktop){
       const {openDesktopControl}=await import('./desktop.js');
       const launched=await openDesktopControl(ui.url);
-      console.log(`LocalMCP desktop control: ${ui.url}`);
+      console.log(`Easy Local MCP desktop control: ${ui.url}`);
       console.log(`Desktop window: ${launched.mode} via ${launched.command}`);
     }else{
-      console.log(`LocalMCP control UI: ${ui.url}`);
+      console.log(`Easy Local MCP control UI: ${ui.url}`);
     }
 
     const close=()=>{
@@ -202,7 +202,7 @@ async function main(){
       const current=await status();
 
       if(current.status!=='running'){
-        throw new Error('LocalMCP is stopped; start it before unlocking');
+        throw new Error('Easy Local MCP is stopped; start it before unlocking');
       }
 
       const minutes=parseUnlockMinutes(process.argv.slice(3));
@@ -214,7 +214,7 @@ async function main(){
       const current=await status();
 
       if(current.status!=='running'){
-        throw new Error('LocalMCP is stopped');
+        throw new Error('Easy Local MCP is stopped');
       }
 
       printStatus(await request('lock'));
@@ -225,7 +225,7 @@ async function main(){
       const current=await status();
 
       if(current.status!=='running'){
-        throw new Error('LocalMCP is stopped');
+        throw new Error('Easy Local MCP is stopped');
       }
 
       printStatus(await request('rotate'));
@@ -249,7 +249,7 @@ async function main(){
 
   if(!['stdio','http'].includes(mode)){
     throw new Error(
-      'Usage: localmcp [start|status|url|unlock|lock|rotate|stop|reload|ui|desktop|tray|init|agent|stdio|http]'
+      'Usage: easy-local-mcp [start|status|url|unlock|lock|rotate|stop|reload|ui|desktop|tray|init|agent|stdio|http]'
     );
   }
 
@@ -310,10 +310,10 @@ async function main(){
         retired.add(closing);
       }
 
-      console.error('LocalMCP configuration hot-reloaded.');
+      console.error('Easy Local MCP configuration hot-reloaded.');
     },
     error=>console.error(
-      'LocalMCP config hot-reload rejected; keeping current configuration:',
+      'Easy Local MCP config hot-reload rejected; keeping current configuration:',
       error instanceof Error?error.message:String(error)
     )
   );
@@ -428,7 +428,7 @@ async function main(){
       ()=>{
         if(process.env.LOCALMCP_INTERNAL!=='1'){
           console.error(
-            `localmcp listening on http://127.0.0.1:${cfg.port}/mcp`
+            `Easy Local MCP listening on http://127.0.0.1:${cfg.port}/mcp`
           );
         }
       }

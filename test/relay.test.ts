@@ -447,7 +447,7 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
 
   await assert.rejects(
     cli('reload'),
-    /LocalMCP is stopped/
+    /Easy Local MCP is stopped/
   );
 
   const firstStart=await cli();

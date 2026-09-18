@@ -183,7 +183,7 @@ export async function openDesktopControl(
   }
 
   throw new Error(
-    'Unable to open the LocalMCP desktop control window. '
+    'Unable to open the Easy Local MCP desktop control window. '
     +'Set LOCALMCP_DESKTOP_BROWSER to an Edge/Chrome executable or open the printed local UI URL manually.'
   );
 }

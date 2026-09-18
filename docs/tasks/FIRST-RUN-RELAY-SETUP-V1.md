@@ -2,7 +2,7 @@
 
 ## Goal
 
-Require an explicit Relay choice before a fresh LocalMCP Agent can start.
+Require an explicit Relay choice before a fresh Easy Local MCP Agent can start.
 
 The public Relay remains the suggested default in the UI, but it is no longer an implicit runtime fallback.
 

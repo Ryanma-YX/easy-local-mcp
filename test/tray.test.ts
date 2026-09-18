@@ -26,12 +26,12 @@ test('tray accepts only loopback Control Center URLs',()=>{
 
 test('tray binary candidates prefer an explicit local override',()=>{
   const env={
-    LOCALMCP_TRAY_BINARY:'D:\\trusted\\localmcp-tray.exe'
+    LOCALMCP_TRAY_BINARY:'D:\\trusted\\easy-local-mcp-tray.exe'
   } as NodeJS.ProcessEnv;
 
   assert.deepEqual(
     trayBinaryCandidates('win32',env,'D:\\repo'),
-    ['D:\\trusted\\localmcp-tray.exe']
+    ['D:\\trusted\\easy-local-mcp-tray.exe']
   );
 });
 
@@ -44,10 +44,10 @@ test('tray binary candidates use release before debug',()=>{
 
   assert.equal(
     candidates[0],
-    'D:\\repo\\src-tauri\\target\\release\\localmcp-tray.exe'
+    'D:\\repo\\src-tauri\\target\\release\\easy-local-mcp-tray.exe'
   );
   assert.equal(
     candidates[1],
-    'D:\\repo\\src-tauri\\target\\debug\\localmcp-tray.exe'
+    'D:\\repo\\src-tauri\\target\\debug\\easy-local-mcp-tray.exe'
   );
 });

@@ -123,7 +123,7 @@ async function readRawConfig(){
   const raw=JSON.parse(content) as unknown;
 
   if(!raw||typeof raw!=='object'||Array.isArray(raw)){
-    throw new Error('LocalMCP configuration must be a JSON object');
+    throw new Error('Easy Local MCP configuration must be a JSON object');
   }
 
   return {path,raw:raw as JsonObject};
@@ -536,7 +536,7 @@ const PAGE=String.raw`<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>LocalMCP Control Center</title>
+<title>Easy Local MCP Control Center</title>
 <style>
 :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#182230;background:#f4f6f9}
 *{box-sizing:border-box}body{margin:0;background:#f4f6f9}.shell{max-width:1240px;margin:0 auto;padding:26px 20px 52px}
@@ -561,12 +561,12 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
 <body>
 <div class="shell">
 <header>
-  <div><h1>LocalMCP Control Center</h1><p>Local-only administration over the existing authenticated control plane.</p></div>
+  <div><h1>Easy Local MCP Control Center</h1><p>Local-only administration over the existing authenticated control plane.</p></div>
   <div class="header-actions"><button id="refreshStatus">Refresh</button><span id="securityBadge" class="badge">Connecting…</span></div>
 </header>
 
 <section id="firstRunSetup" class="card wide" hidden style="margin-bottom:16px">
-<h2>Choose a Relay before starting LocalMCP</h2>
+<h2>Choose a Relay before starting Easy Local MCP</h2>
 <p>The Agent will not start until you explicitly save a Relay. The public Relay is prefilled for convenience, but it is not contacted until you confirm.</p>
 <div class="connection-editor"><input id="setupWorkerInput" type="text" aria-label="Relay origin" placeholder="https://worker.example.com"><button id="setupUseDefault">Use public relay</button></div>
 <div style="margin-top:8px"><input id="setupTokenInput" type="password" aria-label="Registration token" placeholder="Registration token (optional for protected custom Relay)"></div>
@@ -615,7 +615,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
 
 <section class="card wide">
 <h2>Permissions</h2>
-<p class="muted">Configured controls what LocalMCP may expose. Current availability also reflects Agent and LOCK / UNLOCK state.</p>
+<p class="muted">Configured controls what Easy Local MCP may expose. Current availability also reflects Agent and LOCK / UNLOCK state.</p>
 <div style="overflow:auto"><table>
 <thead><tr><th>Capability</th><th>Configured</th><th>Effective config</th><th>Current availability</th></tr></thead>
 <tbody id="capabilityRows">
@@ -626,7 +626,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
 <tr data-cap="processes"><td><span class="cap-name">processes</span><span class="cap-note">Requires shell</span></td><td><input type="checkbox" data-key="processes"></td><td class="effective">-</td><td class="availability">-</td></tr>
 <tr data-cap="externalMcp"><td><span class="cap-name">externalMcp</span><span class="cap-note">External MCP execution is privileged</span></td><td><input type="checkbox" data-key="externalMcp"></td><td class="effective">-</td><td class="availability">-</td></tr>
 </tbody></table></div>
-<div class="warning">Shell runs with the LocalMCP OS user's authority. Workspace restrictions protect LocalMCP file tools; they do not sandbox shell commands.</div>
+<div class="warning">Shell runs with the Easy Local MCP OS user's authority. Workspace restrictions protect Easy Local MCP file tools; they do not sandbox shell commands.</div>
 <div class="actions"><button id="saveConfig" class="primary">Save permission profile</button><span id="configPath" class="path"></span></div>
 </section>
 
@@ -812,7 +812,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
   const loadAudit=async()=>{const data=await api('/api/audit');auditEvents=data.events||[];auditPage=1;renderAudit();};
   const boot=async()=>{await api('/api/session');await load();await loadAudit();};
   const agentAction=async(action)=>{
-    if((action==='stop'||action==='restart')&&!confirm((action==='stop'?'Stop':'Restart')+' the LocalMCP Agent? Active MCP connections will be interrupted.'))return;
+    if((action==='stop'||action==='restart')&&!confirm((action==='stop'?'Stop':'Restart')+' the Easy Local MCP Agent? Active MCP connections will be interrupted.'))return;
     try{await api('/api/agent/'+action,{confirm:action==='start'||action==='stop'||action==='restart'});await load();message('Agent '+action+' completed.');}
     catch(error){message(error.message,true);}
   };
@@ -821,7 +821,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     if(workerManagedByEnv)return;
     const workerUrl=$('setupWorkerInput').value.trim();
     const registrationToken=registrationTokenManagedByEnv?undefined:$('setupTokenInput').value;
-    if(!confirm('Save this Relay and start the LocalMCP Agent?\n\n'+workerUrl))return;
+    if(!confirm('Save this Relay and start the Easy Local MCP Agent?\n\n'+workerUrl))return;
     try{
       await api('/api/relay/configure',{workerUrl,registrationToken,start:true,confirm:true});
       $('setupTokenInput').value='';
@@ -837,12 +837,12 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
   $('agentStop').addEventListener('click',()=>agentAction('stop'));
   $('agentRestart').addEventListener('click',()=>agentAction('restart'));
   document.querySelectorAll('button[data-minutes]').forEach(button=>button.addEventListener('click',async()=>{
-    try{await api('/api/unlock',{minutes:Number(button.dataset.minutes)});await load();message('LocalMCP unlocked.');}catch(error){message(error.message,true);}
+    try{await api('/api/unlock',{minutes:Number(button.dataset.minutes)});await load();message('Easy Local MCP unlocked.');}catch(error){message(error.message,true);}
   }));
-  $('lock').addEventListener('click',async()=>{try{await api('/api/lock');await load();message('LocalMCP locked.');}catch(error){message(error.message,true);}});
+  $('lock').addEventListener('click',async()=>{try{await api('/api/lock');await load();message('Easy Local MCP locked.');}catch(error){message(error.message,true);}});
   $('reload').addEventListener('click',async()=>{try{await api('/api/reload');await load();message('Configuration reloaded.');}catch(error){message(error.message,true);}});
   $('rotate').addEventListener('click',async()=>{
-    if(!confirm('Rotate LocalMCP credentials? Existing connections may be interrupted.'))return;
+    if(!confirm('Rotate Easy Local MCP credentials? Existing connections may be interrupted.'))return;
     try{await api('/api/rotate',{confirm:true});await load();message('Credentials rotated.');}catch(error){message(error.message,true);}
   });
   $('reveal').addEventListener('click',async()=>{
@@ -856,7 +856,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     const registrationToken=registrationTokenManagedByEnv?undefined:$('workerTokenInput').value;
     const running=$('agentStatus').textContent.startsWith('running');
     if(running){
-      if(!confirm('Re-register this LocalMCP device with '+workerUrl+'? Local credentials will switch to the new Worker. The previous Worker registration may remain valid until it is revoked or rotated there.'))return;
+      if(!confirm('Re-register this Easy Local MCP device with '+workerUrl+'? Local credentials will switch to the new Worker. The previous Worker registration may remain valid until it is revoked or rotated there.'))return;
       try{await api('/api/worker/reregister',{workerUrl,registrationToken,confirm:true});$('workerTokenInput').value='';await load();message('Worker re-registration completed.');}catch(error){message(error.message,true);}
     }else{
       if(!confirm('Save this Relay for the next Agent start?\n\n'+workerUrl))return;
@@ -871,13 +871,13 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
       const dangerous=['fileWrite','fileDelete','shell','processes','externalMcp'];
       const enabling=dangerous.filter(key=>!currentFeatures?.[key]&&features[key]);
       let confirmDangerous=false;
-      if(enabling.length){confirmDangerous=confirm('Enable privileged capabilities: '+enabling.join(', ')+'?\n\nThese capabilities grant additional authority while LocalMCP is unlocked.');if(!confirmDangerous)return;}
+      if(enabling.length){confirmDangerous=confirm('Enable privileged capabilities: '+enabling.join(', ')+'?\n\nThese capabilities grant additional authority while Easy Local MCP is unlocked.');if(!confirmDangerous)return;}
       await api('/api/config/update',{features,confirmDangerous});await load();message('Permission profile saved.');
     }catch(error){message(error.message,true);}
   });
   $('addWorkspace').addEventListener('click',()=>{let i=1;let name='workspace'+i;const names=new Set(currentWorkspaces.map(item=>item.name));while(names.has(name))name='workspace'+(++i);currentWorkspaces.push({name,root:''});renderWorkspaces();});
   $('saveWorkspaces').addEventListener('click',async()=>{
-    if(!confirm('Save workspace changes? This changes the LocalMCP file-access boundary.'))return;
+    if(!confirm('Save workspace changes? This changes the Easy Local MCP file-access boundary.'))return;
     try{await api('/api/workspaces/update',{workspaces:currentWorkspaces,defaultWorkspace:currentDefaultWorkspace,confirm:true});await load();message('Workspaces saved.');}catch(error){message(error.message,true);}
   });
   $('refreshStatus').addEventListener('click',()=>load().catch(error=>message(error.message,true)));
@@ -1057,7 +1057,7 @@ export async function startControlUi(options:ControlUiOptions={}):Promise<Contro
         if(body.confirm!==true)throw new Error('MCP URL reveal requires explicit confirmation');
         const current=await request('status');
         if(current.status!=='running'||!current.url){
-          throw new Error('LocalMCP is not running or has no MCP URL');
+          throw new Error('Easy Local MCP is not running or has no MCP URL');
         }
         await auditSecurity('mcp_url_reveal');
         json(res,200,{url:current.url});
@@ -1092,7 +1092,7 @@ export async function startControlUi(options:ControlUiOptions={}):Promise<Contro
   const address=server.address();
   if(!address||typeof address==='string'){
     server.close();
-    throw new Error('Unable to determine LocalMCP UI address');
+    throw new Error('Unable to determine Easy Local MCP UI address');
   }
 
   const port=address.port;

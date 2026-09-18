@@ -122,7 +122,7 @@ async function loadSettings(){
       publicRelay:desiredOrigin.href===validatedWorkerOrigin(DEFAULT_PUBLIC_WORKER_URL).href
     });
 
-    console.error(`Registered LocalMCP device ${settings.deviceId??'legacy'}.`);
+    console.error(`Registered Easy Local MCP device ${settings.deviceId??'legacy'}.`);
   }
 
   origin=desiredOrigin;
@@ -142,7 +142,7 @@ async function writeConnectionFile(){
   mcpUrl=currentMcpUrl();
 
   if(!mcpUrl||!settings){
-    throw new Error('LocalMCP connection settings are not ready');
+    throw new Error('Easy Local MCP connection settings are not ready');
   }
 
   await secureWriteFile(
@@ -183,7 +183,7 @@ async function reregisterDevice(workerUrl:string){
 
 async function rotateCredentials(){
   if(!settings||!origin){
-    throw new Error('LocalMCP Worker settings are not ready');
+    throw new Error('Easy Local MCP Worker settings are not ready');
   }
 
   if(!settings.deviceId){
@@ -386,7 +386,7 @@ function stop(code=0){
 
 async function reloadLocal(){
   if(closing||!local){
-    throw new Error('LocalMCP is not ready');
+    throw new Error('Easy Local MCP is not ready');
   }
 
   await config();
@@ -405,7 +405,7 @@ async function reloadLocal(){
   });
 
   if(closing){
-    throw new Error('LocalMCP is stopping');
+    throw new Error('Easy Local MCP is stopping');
   }
 
   local=spawnLocal();
@@ -431,7 +431,7 @@ async function reloadLocal(){
 
       if(response.status===405){
         await auditSecurity('config_reload');
-        console.error('LocalMCP configuration reloaded.');
+        console.error('Easy Local MCP configuration reloaded.');
         return;
       }
     }catch{}
@@ -517,7 +517,7 @@ if(!localReady||closing){
       attempt=0;
 
       console.log(
-        `LocalMCP is running\n\nMCP URL: ${maskMcpUrl(mcpUrl)}\nUse "localmcp url" to reveal the full credential-bearing URL.\nConfig: ~/.localmcp/localmcp.json\nSecurity: LOCKED until locally unlocked.\n`
+        `Easy Local MCP is running\n\nMCP URL: ${maskMcpUrl(mcpUrl)}\nUse "easy-local-mcp url" to reveal the full credential-bearing URL.\nConfig: ~/.localmcp/localmcp.json\nSecurity: LOCKED until locally unlocked.\n`
       );
     });
 

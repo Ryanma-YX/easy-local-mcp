@@ -16,7 +16,7 @@ The UI is a thin local client over the same security, policy, lifecycle, and aut
 
 ## Goal
 
-Provide a small local control panel for LocalMCP without introducing a remote administration surface or a second authorization model.
+Provide a small local control panel for Easy Local MCP without introducing a remote administration surface or a second authorization model.
 
 ## Design principles
 
@@ -50,7 +50,7 @@ Browser
   -> http://127.0.0.1:<dynamic-port>
   -> ephemeral HttpOnly local UI session
   -> localmcp ui process
-       +--> authenticated native control IPC -> LocalMCP Agent
+       +--> authenticated native control IPC -> Easy Local MCP Agent
        +--> existing config parser -> localmcp.json
        +--> atomic protected config writer
        +--> redacted audit reader
@@ -200,11 +200,11 @@ Registration secrets must never be placed in URLs.
 
 The UI should prominently communicate:
 
-> LocalMCP runs with your OS user permissions. Enabling Shell or arbitrary external MCP servers can grant capabilities equivalent to that OS user.
+> Easy Local MCP runs with your OS user permissions. Enabling Shell or arbitrary external MCP servers can grant capabilities equivalent to that OS user.
 
 And:
 
-> Workspace restrictions protect LocalMCP file tools. They do not sandbox Shell commands.
+> Workspace restrictions protect Easy Local MCP file tools. They do not sandbox Shell commands.
 
 These warnings should be visible near permission controls rather than hidden only in documentation.
 

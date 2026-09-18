@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "localmcp-relay",
+  "name": "easy-local-mcp-relay",
   "main": "worker/index.ts",
   "compatibility_date": "2026-09-06",
   "workers_dev": true,

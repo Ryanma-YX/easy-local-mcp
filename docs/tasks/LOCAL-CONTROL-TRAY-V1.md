@@ -5,7 +5,7 @@
 Implemented on branch: local-control-tray-v1
 Baseline: local-control-desktop-v1
 
-Tray v1 adds a thin Tauri 2 native shell over the existing LocalMCP Control Center. It does not replace the Node Agent, Control Center, authorization model, or control IPC.
+Tray v1 adds a thin Tauri 2 native shell over the existing Easy Local MCP Control Center. It does not replace the Node Agent, Control Center, authorization model, or control IPC.
 
 ## Toolchain
 
@@ -27,7 +27,7 @@ Build:
 Launch:
     localmcp tray
 
-The source-development build expects src-tauri/target/release/localmcp-tray.exe or the debug equivalent. LOCALMCP_TRAY_BINARY may point to a trusted local binary.
+The source-development build expects src-tauri/target/release/easy-local-mcp-tray.exe or the debug equivalent. LOCALMCP_TRAY_BINARY may point to a trusted local binary.
 
 ## Runtime architecture
 
@@ -40,10 +40,10 @@ The Rust shell does not receive MCP URL credentials, control.secret, agentToken,
 - left-click tray icon shows/focuses the Control Center
 - Show Control Center menu item
 - Hide Control Center menu item
-- Quit LocalMCP Desktop menu item
+- Quit Easy Local MCP Desktop menu item
 - closing the native window hides it to tray
 - Quit closes the Tauri shell and its Control Center HTTP host
-- Quit does not stop a separately running LocalMCP Agent
+- Quit does not stop a separately running Easy Local MCP Agent
 
 ## Security
 
@@ -76,4 +76,4 @@ Initial Windows release build took 2m 41s. After dependencies were compiled, inc
 
 ## Distribution still pending
 
-Tray v1 is currently a source-development feature. A future distribution phase should use GitHub Release platform binaries, platform-specific optional npm packages, or an installer. End users should not need Rust merely to run LocalMCP Desktop.
+Tray v1 is currently a source-development feature. A future distribution phase should use GitHub Release platform binaries, platform-specific optional npm packages, or an installer. End users should not need Rust merely to run Easy Local MCP Desktop.

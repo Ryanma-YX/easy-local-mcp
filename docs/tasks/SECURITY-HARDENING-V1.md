@@ -31,7 +31,7 @@ The project was not rewritten. Existing workspace handling, loopback MCP transpo
 2. The Cloudflare Worker relay is trusted infrastructure and can observe relayed MCP plaintext after TLS termination.
 3. The Agent-to-loopback HTTP hop is local-only and authenticated with an ephemeral token.
 4. Workspace filesystem boundaries protect file tools only.
-5. Shell and external MCP servers run with the LocalMCP process user's OS authority.
+5. Shell and external MCP servers run with the Easy Local MCP process user's OS authority.
 6. The local control IPC endpoint is the privileged management plane and is not exposed as an MCP tool.
 7. External MCP descriptions/annotations are metadata only and are never trusted as an authorization boundary.
 
@@ -245,7 +245,7 @@ Audit failure does not crash normal operation.
 
 `src/launch.ts` was removed.
 
-`start:quick` now routes to the normal LocalMCP lifecycle instead of maintaining a separate project-local `.localmcp` / Quick Tunnel model.
+`start:quick` now routes to the normal Easy Local MCP lifecycle instead of maintaining a separate project-local `.localmcp` / Quick Tunnel model.
 
 ### Windows ProcessManager fix discovered during validation
 
@@ -254,7 +254,7 @@ During full regression testing, the test runner exposed a real Windows lifecycle
 - tracked shell PID could already be gone
 - descendants retained inherited stdio handles
 - Node `close` was delayed
-- LocalMCP continued to report the process as `running`
+- Easy Local MCP continued to report the process as `running`
 - temp directory cleanup could fail with EBUSY
 
 Fix:

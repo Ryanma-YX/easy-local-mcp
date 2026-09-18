@@ -8,7 +8,7 @@ Implemented on branch:
 local-control-ui-v2
 ```
 
-V2 turns the original local Web control MVP into a fuller LocalMCP Control Center while preserving the same security model.
+V2 turns the original local Web control MVP into a fuller Easy Local MCP Control Center while preserving the same security model.
 
 ## Goals
 
@@ -72,7 +72,7 @@ Capabilities remain:
 - processes
 - externalMcp
 
-The LocalMCP authorization layer remains authoritative.
+The Easy Local MCP authorization layer remains authoritative.
 
 ### Workspace management
 

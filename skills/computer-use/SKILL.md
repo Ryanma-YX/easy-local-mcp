@@ -1,6 +1,6 @@
 # Computer Use
 
-Operate local desktop applications through the cua-driver MCP server using LocalMCP's fixed MCP gateways.
+Operate local desktop applications through the cua-driver MCP server using Easy Local MCP's fixed MCP gateways.
 
 ## Discover and call
 

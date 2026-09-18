@@ -64,7 +64,7 @@ export async function secureWriteFileAtomic(path:string,data:string){
 
 export async function getControlSecret():Promise<string>{
   const value=(await readFile(controlSecretFile,'utf8')).trim();
-  if(!/^[a-f0-9]{64}$/.test(value))throw new Error('Invalid LocalMCP control secret');
+  if(!/^[a-f0-9]{64}$/.test(value))throw new Error('Invalid Easy Local MCP control secret');
   return value;
 }
 
@@ -252,7 +252,7 @@ export async function authorizeTool(
     return {
       allowed:false,
       privileged,
-      reason:'Capability is not enabled in LocalMCP configuration'
+      reason:'Capability is not enabled in Easy Local MCP configuration'
     };
   }
 
@@ -260,7 +260,7 @@ export async function authorizeTool(
     return {
       allowed:false,
       privileged:true,
-      reason:'LocalMCP is locked. Unlock locally before using privileged tools.'
+      reason:'Easy Local MCP is locked. Unlock locally before using privileged tools.'
     };
   }
 

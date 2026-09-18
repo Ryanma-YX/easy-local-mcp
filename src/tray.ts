@@ -53,8 +53,8 @@ export function trayBinaryCandidates(
   }
 
   const name=platform==='win32'
-    ? 'localmcp-tray.exe'
-    : 'localmcp-tray';
+    ? 'easy-local-mcp-tray.exe'
+    : 'easy-local-mcp-tray';
 
   return [
     resolve(root,'src-tauri','target','release',name),
@@ -80,7 +80,7 @@ export async function startNativeTray(
 
   if(!command){
     throw new Error(
-      'LocalMCP native tray binary was not found. Run npm run tray:build first, '
+      'Easy Local MCP native tray binary was not found. Run npm run tray:build first, '
       +'or set LOCALMCP_TRAY_BINARY to a trusted local binary.'
     );
   }

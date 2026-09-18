@@ -8,11 +8,11 @@ Implemented on branch:
 local-control-desktop-v1
 ```
 
-Desktop Shell v1 wraps the existing LocalMCP Control Center in a dedicated browser app-mode window without introducing a new backend, authorization layer, or native dependency.
+Desktop Shell v1 wraps the existing Easy Local MCP Control Center in a dedicated browser app-mode window without introducing a new backend, authorization layer, or native dependency.
 
 ## Goal
 
-Move LocalMCP from “CLI command opens a browser tab” toward a desktop-control experience while keeping the security-critical implementation in the existing local Control Center and authenticated Agent IPC.
+Move Easy Local MCP from “CLI command opens a browser tab” toward a desktop-control experience while keeping the security-critical implementation in the existing local Control Center and authenticated Agent IPC.
 
 ## Command
 
@@ -22,7 +22,7 @@ localmcp desktop
 
 This command:
 
-1. initializes LocalMCP if necessary
+1. initializes Easy Local MCP if necessary
 2. starts the same loopback-only Control Center used by `localmcp ui`
 3. does not automatically open the ordinary browser flow
 4. launches a dedicated browser app-mode window when possible
@@ -114,7 +114,7 @@ A future native wrapper should add:
 - system tray icon
 - Show / Hide Control Center
 - Start with OS
-- Quit LocalMCP Desktop
+- Quit Easy Local MCP Desktop
 - optional Agent status indicator
 - native folder picker for Workspace selection
 
