@@ -16,9 +16,22 @@ import {validatedWorkerOrigin} from '../src/relay.js';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import WebSocket from 'ws';
+import {adminPage} from '../worker/admin.js';
 
 const nodeCommand=(script:string)=>
   JSON.stringify(process.execPath)+' -e '+JSON.stringify(script);
+
+test('Zone admin page emits syntactically valid browser JavaScript',()=>{
+  const html=adminPage();
+  const start=html.indexOf('<script>');
+  const end=html.indexOf('</script>');
+
+  assert.ok(start>=0&&end>start);
+  const script=html.slice(start+'<script>'.length,end);
+  assert.doesNotThrow(()=>new Function(script));
+  assert.match(script,/Zone ID:.*\\nAdmin token:/s);
+  assert.match(script,/data\.code\+'\\nExpires: '/);
+});
 
 test('Worker origins require HTTPS except explicit loopback development origins',()=>{
   assert.equal(validatedWorkerOrigin('https://worker.example').href,'https://worker.example/');

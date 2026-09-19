@@ -186,7 +186,7 @@ $('createZone').onclick=async()=>{
     $('zoneId').value=data.zoneId;
     $('adminToken').value=data.adminToken;
     $('created').className='';
-    $('createdValues').textContent='Zone ID: '+data.zoneId+'\nAdmin token: '+data.adminToken;
+    $('createdValues').textContent='Zone ID: '+data.zoneId+'\\nAdmin token: '+data.adminToken;
     await load();
     message('Zone created. Save the administrator token.');
   }catch(error){message(error.message,true)}
@@ -203,7 +203,7 @@ $('makeJoin').onclick=async()=>{
       body:JSON.stringify({ttlMinutes:10})
     });
     $('joinResult').className='';
-    $('joinCode').textContent=data.code+'\nExpires: '+new Date(data.expiresAt).toLocaleString();
+    $('joinCode').textContent=data.code+'\\nExpires: '+new Date(data.expiresAt).toLocaleString();
     await load();
     message('One-time join code created.');
   }catch(error){message(error.message,true)}
