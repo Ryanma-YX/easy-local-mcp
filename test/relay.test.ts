@@ -514,14 +514,16 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     )
   );
 
+  assert.equal(tools.tools.length,26);
+
   assert.ok(
-    !tools.tools.some(
+    tools.tools.some(
       tool=>tool.name==='write_file'
     )
   );
 
   assert.ok(
-    !tools.tools.some(
+    tools.tools.some(
       tool=>tool.name==='call_mcp_tool'
     )
   );
@@ -1027,7 +1029,7 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
   const restartedTools=await second.listTools();
 
   assert.ok(
-    !restartedTools.tools.some(
+    restartedTools.tools.some(
       tool=>tool.name==='write_file'
     )
   );

@@ -66,6 +66,8 @@ LOCKED
 
 即使配置允许 Shell / 写文件 / Process，仍需要在本机明确 Unlock 后才能调用。
 
+> LOCK / UNLOCK 只控制特权工具的**执行授权**。已经在配置中启用的工具在 LOCKED 状态下仍会出现在 MCP 工具列表中，以便 ChatGPT 正常刷新连接器能力与权限；实际调用仍会被本机 LOCK 拒绝，直到用户明确 Unlock。
+
 ---
 
 ## Windows 安装
@@ -193,14 +195,16 @@ easy-local-mcp url
 
 然后在 ChatGPT 中：
 
-1. 打开 Developer Mode
-2. 添加 MCP / Connector
+1. 打开 Developer Mode：[点我打开开发者模式设置](https://chatgpt.com/#settings/Security?section=developer-mode)
+2. 新建 MCP / Connector：[点我打开连接器创建页面](https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins)
 3. 填入完整 MCP URL
 4. Authentication 选择：
 
 ```text
 None
 ```
+
+> 如果 ChatGPT 当前界面隐藏了“创建连接器 / Create Connector”入口，可以直接使用上面的连接器创建链接进入。
 
 完整 MCP URL 本身就是访问凭证，请不要：
 

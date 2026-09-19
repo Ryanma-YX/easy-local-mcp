@@ -332,13 +332,13 @@ test('stable MCP gateways stay lazy, require unlock, validate and forward extern
   const locked=await client.listTools();
 
   assert.ok(
-    !locked.tools.some(
+    locked.tools.some(
       tool=>tool.name==='list_mcp_tools'
     )
   );
 
   assert.ok(
-    !locked.tools.some(
+    locked.tools.some(
       tool=>tool.name==='call_mcp_tool'
     )
   );

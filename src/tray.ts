@@ -1,6 +1,6 @@
 import {spawn, type ChildProcess} from 'node:child_process';
 import {access} from 'node:fs/promises';
-import {dirname, resolve} from 'node:path';
+import {dirname, posix, resolve, win32} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 export interface NativeTraySession {
@@ -56,9 +56,11 @@ export function trayBinaryCandidates(
     ? 'easy-local-mcp-tray.exe'
     : 'easy-local-mcp-tray';
 
+  const pathApi=platform==='win32'?win32:posix;
+
   return [
-    resolve(root,'src-tauri','target','release',name),
-    resolve(root,'src-tauri','target','debug',name)
+    pathApi.resolve(root,'src-tauri','target','release',name),
+    pathApi.resolve(root,'src-tauri','target','debug',name)
   ];
 }
 

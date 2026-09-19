@@ -12,7 +12,7 @@ server.setRequestHandler(ListToolsRequestSchema, async request => {
 });
 server.setRequestHandler(CallToolRequestSchema, async request => {
   if(request.params.arguments?.text==='slow')await new Promise(resolve=>setTimeout(resolve,2500));
-  if(request.params.arguments?.text==='saturate')await new Promise(resolve=>setTimeout(resolve,900));
+  if(request.params.arguments?.text==='saturate')await new Promise(resolve=>setTimeout(resolve,2500));
   // Deliberately no input validation here: the bridge must reject invalid arguments.
   return {content:[{type:'text',text:JSON.stringify(request.params.arguments)},{type:'image',mimeType:'image/png',data:'aGVsbG8='}],structuredContent:{tool:request.params.name},isError:request.params.arguments?.text==='fail'};
 });

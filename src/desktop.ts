@@ -1,6 +1,6 @@
 import {spawn} from 'node:child_process';
 import {access} from 'node:fs/promises';
-import {join} from 'node:path';
+import {win32} from 'node:path';
 
 export interface DesktopLaunchResult {
   mode:'app'|'browser';
@@ -19,7 +19,7 @@ type Env=NodeJS.ProcessEnv;
 function windowsPaths(env:Env){
   const values:string[]=[];
   const add=(base:string|undefined,...parts:string[])=>{
-    if(base)values.push(join(base,...parts));
+    if(base)values.push(win32.join(base,...parts));
   };
 
   add(env['ProgramFiles(x86)'],'Microsoft','Edge','Application','msedge.exe');

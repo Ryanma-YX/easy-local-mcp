@@ -7,7 +7,7 @@ import { runCommand } from './command.js';
 import { ProcessManager } from './process.js';
 import type { McpLoader } from './mcp/loader.js';
 import type { Skill } from './skills/loader.js';
-import { auditSecurity, authorizeTool, getUnlockStatus } from './security.js';
+import { auditSecurity, authorizeTool, configuredForTool, getUnlockStatus } from './security.js';
 
 const W=z.string().optional(),withWorkspace=<T extends z.ZodRawShape>(shape:T)=>z.object({workspace:W,...shape});
 const schemas={
@@ -54,8 +54,7 @@ export async function createServer(config:Config,mcp:McpLoader,skills:Skill[],pr
   const definitions=async(current:Config):Promise<Tool[]>=>{
     const tools:Tool[]=[];
     for(const [name,schema] of Object.entries(schemas)){
-      const decision=await authorizeTool(current,name);
-      if(!decision.allowed)continue;
+      if(!configuredForTool(current,name))continue;
 		tools.push({
 		  name,
 		  description:descriptions[name as N]||name.replaceAll('_',' '),

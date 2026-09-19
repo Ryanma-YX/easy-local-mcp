@@ -278,9 +278,10 @@ test('real SDK stdio honors explicit legacy capabilities but requires local unlo
 
   tools=await client.listTools();
 
-  assert.ok(!tools.tools.some(tool=>tool.name==='run_command'));
-  assert.ok(!tools.tools.some(tool=>tool.name==='write_file'));
-  assert.ok(!tools.tools.some(tool=>tool.name==='call_mcp_tool'));
+  assert.equal(tools.tools.length,26);
+  assert.ok(tools.tools.some(tool=>tool.name==='run_command'));
+  assert.ok(tools.tools.some(tool=>tool.name==='write_file'));
+  assert.ok(tools.tools.some(tool=>tool.name==='call_mcp_tool'));
 
   assert.equal(
     (
