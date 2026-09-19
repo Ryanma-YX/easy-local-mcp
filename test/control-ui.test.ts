@@ -187,6 +187,8 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
   const inlineScript=/<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
   assert.ok(inlineScript);
   assert.doesNotThrow(()=>new Function(inlineScript));
+  assert.match(inlineScript,/response\.status===401/);
+  assert.match(inlineScript,/post\('\/api\/session'/);
   assert.ok(!html.includes(controlSecret));
   assert.ok(!html.includes('a'.repeat(64)));
 
@@ -253,6 +255,10 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
 
   const initial=await api('/api/status');
   assert.equal(initial.response.status,200);
+  const refreshedCookie=initial.response.headers.get('set-cookie');
+  assert.ok(refreshedCookie);
+  assert.match(refreshedCookie,/Max-Age=1800/i);
+  assert.equal(refreshedCookie!.split(';')[0],cookie);
   assert.equal(initial.value.agent.status,'running');
   assert.equal(initial.value.agent.locked,true);
   assert.equal(initial.value.connection.workerUrl,'https://example.test/');

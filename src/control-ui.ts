@@ -64,6 +64,13 @@ function securityHeaders(res:ServerResponse){
   res.setHeader('X-Frame-Options','DENY');
 }
 
+function setSessionCookie(res:ServerResponse,token:string){
+  res.setHeader(
+    'Set-Cookie',
+    `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_MS/1000}`
+  );
+}
+
 function json(res:ServerResponse,statusCode:number,value:unknown){
   securityHeaders(res);
   res.statusCode=statusCode;
@@ -672,9 +679,18 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     clearTimeout(message.timer);
     message.timer=setTimeout(()=>node.style.display='none',4500);
   };
-  const api=async(path,body={})=>{
+  const post=async(path,body={})=>{
     const response=await fetch(path,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const data=await response.json().catch(()=>({error:'Invalid server response'}));
+    return {response,data};
+  };
+  const api=async(path,body={},retrySession=true)=>{
+    let {response,data}=await post(path,body);
+    if(response.status===401&&retrySession&&path!=='/api/session'){
+      const renewed=await post('/api/session',{});
+      if(!renewed.response.ok)throw new Error(renewed.data.error||('HTTP '+renewed.response.status));
+      ({response,data}=await post(path,body));
+    }
     if(!response.ok)throw new Error(data.error||('HTTP '+response.status));
     return data;
   };
@@ -943,10 +959,7 @@ export async function startControlUi(options:ControlUiOptions={}):Promise<Contro
       if(target.pathname==='/api/session'){
         const token=randomBytes(32).toString('hex');
         sessions.set(token,now+SESSION_TTL_MS);
-        res.setHeader(
-          'Set-Cookie',
-          `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_MS/1000}`
-        );
+        setSessionCookie(res,token);
         json(res,200,{ok:true});
         return;
       }
@@ -962,6 +975,7 @@ export async function startControlUi(options:ControlUiOptions={}):Promise<Contro
       }
 
       sessions.set(session,now+SESSION_TTL_MS);
+      setSessionCookie(res,session);
 
       if(target.pathname==='/api/status'){
         await readJsonBody(req);
