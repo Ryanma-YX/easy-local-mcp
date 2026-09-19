@@ -49,9 +49,9 @@ The page can:
 - rename a device
 - revoke a device
 
-If the Relay is protected with `REGISTRATION_TOKEN_HASH`, creating a Zone requires the corresponding registration token.
+The `/admin` dashboard requires a Relay Admin login backed by `RELAY_ADMIN_TOKEN_HASH`. Without that configuration, the management plane fails closed. `REGISTRATION_TOKEN_HASH` remains a separate compatibility mechanism for non-admin registration flows and is not the Relay administrator credential.
 
-Existing Zones created by the earlier management-only Zone build remain valid. Open the Zone and choose **Rotate Connector** once to create the shared MCP connector credential.
+Existing Zones created before the Relay Admin registry remain valid. After upgrading, sign in to `/admin` and use **Import Existing Zone** with the Zone ID and existing Zone Admin Token. The token is used only to verify that Zone and is not stored. If the Zone predates the shared connector, choose **Rotate Connector** once to create a Zone MCP URL.
 
 ## Join another device
 
@@ -141,8 +141,10 @@ The revoked device must register or join again before it can reconnect.
 
 The credentials have different purposes:
 
-- **registration token**: optionally protects creation and registration operations on a self-hosted Relay
-- **Zone admin token**: manages one Zone
+- **Relay Admin token**: signs in to the Relay-wide `/admin` control plane; the Worker is configured with `RELAY_ADMIN_TOKEN_HASH`
+- **Relay Admin session**: short-lived browser session stored as an `HttpOnly`, `Secure`, `SameSite=Strict` cookie; only its hash is stored by the Relay
+- **registration token**: optionally protects legacy/non-admin registration operations on a self-hosted Relay
+- **Zone admin token**: manages one Zone and supports delegated Zone administration/import verification
 - **Zone MCP token**: authenticates the shared ChatGPT connector
 - **join code**: short-lived, single-use credential for adding one device
 - **Agent token**: authenticates one local Agent to its per-device Relay

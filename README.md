@@ -130,7 +130,7 @@ See [Self-hosted Relay](https://github.com/Ryanma-YX/easy-local-mcp/wiki/Self-ho
 
 ## Multi-Device Zones
 
-A Relay can group several devices into a Zone. Open `/admin` on a Zone-capable Relay to create a Zone, generate a one-time join code, view device status, rename devices, or revoke them. On a stopped device, stage the join with `localmcp join <zone-code>`, then start Easy Local MCP normally.
+A Relay can group several devices into a Zone. The `/admin` dashboard is protected by a dedicated `RELAY_ADMIN_TOKEN_HASH`; without that configuration it fails closed and exposes no management actions. After Relay Admin login, you can create/import Zones, generate one-time join codes, view device status, rotate the shared connector, rename devices, or revoke them. On a stopped device, stage the join with `localmcp join <zone-code>`, then start Easy Local MCP normally.
 
 A Zone also exposes one shared MCP connector URL. ChatGPT can connect to that URL once, call `list_devices`, and route the normal LocalMCP tools by adding a required `device` argument. Per-device MCP URLs continue to work for compatibility, and the target Agent still enforces its own local LOCK and feature permissions. Existing Zones created by an earlier Zone build can enable the shared connector by choosing **Rotate Connector** in `/admin`. See [Multi-Device Zones](https://github.com/Ryanma-YX/easy-local-mcp/wiki/Multi-Device-Zones).
 

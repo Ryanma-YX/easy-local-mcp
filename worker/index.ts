@@ -1,5 +1,15 @@
-import { adminPage } from './admin';
+import { adminLoginPage, adminPage, adminSetupRequiredPage } from './admin';
+import {
+  adminCookie,
+  adminSession,
+  clearAdminCookie,
+  createAdminSession,
+  deleteAdminSession,
+  listRegisteredZones,
+  registerZone
+} from './admin-session';
 import { handleZoneMcp } from './zone-mcp';
+export { RelayAdmin } from './relay-admin';
 export { ZoneManager } from './zone';
 import {
   Assembly,
@@ -12,9 +22,11 @@ import {
 interface Env {
   RELAY:DurableObjectNamespace;
   ZONE:DurableObjectNamespace;
+  ADMIN:DurableObjectNamespace;
   MCP_TOKEN_HASH?:string;
   AGENT_TOKEN_HASH?:string;
   REGISTRATION_TOKEN_HASH?:string;
+  RELAY_ADMIN_TOKEN_HASH?:string;
 }
 
 const json=(data:unknown,status=200)=>Response.json(
@@ -157,6 +169,148 @@ async function createRegistration(
     mcpUrl:`${origin}/mcp/${deviceId}/${mcpToken}`
   };
 }
+
+function adminHtml(content:string){
+  return new Response(
+    content,
+    {
+      headers:{
+        'Content-Type':'text/html; charset=utf-8',
+        'Cache-Control':'no-store',
+        'Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+      }
+    }
+  );
+}
+
+function relayAdminConfigured(env:Env){
+  return !!env.RELAY_ADMIN_TOKEN_HASH
+    && /^[a-f0-9]{64}$/.test(env.RELAY_ADMIN_TOKEN_HASH);
+}
+
+async function relayAdminAuthorized(request:Request,env:Env){
+  if(!relayAdminConfigured(env))return false;
+  return (await adminSession(request,env)).authenticated;
+}
+
+async function createZone(
+  env:Env,
+  origin:string,
+  name:unknown
+){
+  const zoneId=crypto.randomUUID();
+  const adminToken=randomHex();
+  const mcpToken=randomHex();
+  const response=await zone(env,zoneId).fetch(
+    new Request(
+      'https://zone.internal/create',
+      {
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json',
+          'x-zone-admin-hash':await sha256(adminToken),
+          'x-zone-mcp-hash':await sha256(mcpToken)
+        },
+        body:JSON.stringify({name})
+      }
+    )
+  );
+
+  if(!response.ok)return response;
+
+  const created=await response.json() as {
+    name:string;
+    createdAt:string;
+  };
+
+  await registerZone(
+    env,
+    {
+      zoneId,
+      name:created.name,
+      createdAt:created.createdAt
+    }
+  );
+
+  return json(
+    {
+      zoneId,
+      adminToken,
+      mcpToken,
+      mcpUrl:`${origin}/mcp/z/${zoneId}/${mcpToken}`,
+      name:created.name,
+      createdAt:created.createdAt,
+      adminUrl:`${origin}/admin`
+    },
+    201
+  );
+}
+
+async function zoneInfo(
+  env:Env,
+  zoneId:string,
+  headers:HeadersInit
+){
+  const response=await zone(env,zoneId).fetch(
+    new Request(
+      'https://zone.internal/info',
+      {headers}
+    )
+  );
+
+  if(!response.ok)return response;
+
+  const info=await response.json() as {
+    name:string;
+    createdAt:string;
+    activeJoinCodes:number;
+    connectorConfigured:boolean;
+    devices:Array<{
+      deviceId:string;
+      name:string;
+      platform?:string;
+      arch?:string;
+      version?:string;
+      joinedAt:string;
+    }>;
+  };
+
+  const devices=await Promise.all(
+    info.devices.map(async device=>{
+      const status=await relay(env,device.deviceId).fetch(
+        new Request(
+          'https://relay.internal/status',
+          {
+            headers:{
+              'x-localmcp-internal':'1'
+            }
+          }
+        )
+      );
+
+      let online=false;
+      if(status.ok){
+        const data=await status.json() as {online?:boolean};
+        online=data.online===true;
+      }
+
+      return {
+        ...device,
+        online
+      };
+    })
+  );
+
+  return json({
+    zoneId,
+    name:info.name,
+    createdAt:info.createdAt,
+    activeJoinCodes:info.activeJoinCodes,
+    connectorConfigured:info.connectorConfigured,
+    devices
+  });
+}
+
 export default {
   async fetch(request:Request,env:Env):Promise<Response>{
     const url=new URL(request.url);
@@ -167,82 +321,381 @@ export default {
         service:'easy-local-mcp-relay',
         registration:true,
         registrationProtected:!!env.REGISTRATION_TOKEN_HASH,
+        relayAdminProtected:relayAdminConfigured(env),
         zones:true
       });
     }
 
     if(url.pathname==='/admin'&&request.method==='GET'){
+      if(!relayAdminConfigured(env)){
+        return adminHtml(adminSetupRequiredPage());
+      }
+
+      if(await relayAdminAuthorized(request,env)){
+        return adminHtml(adminPage());
+      }
+
+      return adminHtml(adminLoginPage());
+    }
+
+    if(url.pathname==='/api/admin/login'&&request.method==='POST'){
+      if(!sameOriginAllowed(request,url)){
+        return json({error:'Origin not allowed'},403);
+      }
+
+      if(!relayAdminConfigured(env)){
+        return json({error:'Relay admin authentication is not configured'},503);
+      }
+
+      let body:Record<string,unknown>;
+      try{
+        body=JSON.parse(await bodyText(request,16*1024)) as Record<string,unknown>;
+      }catch{
+        return json({error:'Invalid JSON'},400);
+      }
+
+      const token=typeof body.token==='string'?body.token:'';
+      if(!await authorized(token,env.RELAY_ADMIN_TOKEN_HASH)){
+        return json({error:'Invalid admin credential'},401);
+      }
+
+      const session=await createAdminSession(env);
       return new Response(
-        adminPage(),
+        JSON.stringify({ok:true,expiresAt:session.expiresAt}),
         {
+          status:200,
           headers:{
-            'Content-Type':'text/html; charset=utf-8',
+            'Content-Type':'application/json',
             'Cache-Control':'no-store',
-            'Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+            'Set-Cookie':adminCookie(session.token)
           }
         }
       );
     }
 
-    if(url.pathname==='/api/zones'&&request.method==='POST'){
+    if(url.pathname==='/api/admin/logout'&&request.method==='POST'){
       if(!sameOriginAllowed(request,url)){
         return json({error:'Origin not allowed'},403);
       }
 
-      if(
-        env.REGISTRATION_TOKEN_HASH
-        && !await authorized(bearer(request),env.REGISTRATION_TOKEN_HASH)
-      ){
-        return new Response(null,{status:404});
+      await deleteAdminSession(request,env);
+      return new Response(
+        JSON.stringify({ok:true}),
+        {
+          headers:{
+            'Content-Type':'application/json',
+            'Cache-Control':'no-store',
+            'Set-Cookie':clearAdminCookie()
+          }
+        }
+      );
+    }
+
+    if(url.pathname==='/api/admin/session'&&request.method==='GET'){
+      if(!relayAdminConfigured(env)){
+        return json({authenticated:false,configured:false});
       }
 
-      let body:Record<string,unknown>={};
+      const session=await adminSession(request,env);
+      return json(
+        session.authenticated
+          ? {authenticated:true,configured:true,expiresAt:session.expiresAt}
+          : {authenticated:false,configured:true}
+      );
+    }
+
+    if(url.pathname==='/api/admin/zones'){
+      if(!sameOriginAllowed(request,url)){
+        return json({error:'Origin not allowed'},403);
+      }
+
+      if(!await relayAdminAuthorized(request,env)){
+        return json({error:'Authentication required'},401);
+      }
+
+      if(request.method==='GET'){
+        return json(await listRegisteredZones(env));
+      }
+
+      if(request.method==='POST'){
+        let body:Record<string,unknown>={};
+        try{
+          body=JSON.parse(await bodyText(request,16*1024)) as Record<string,unknown>;
+        }catch{
+          return json({error:'Invalid JSON'},400);
+        }
+
+        return createZone(env,url.origin,body.name);
+      }
+
+      return new Response(null,{status:405,headers:{Allow:'GET, POST'}});
+    }
+
+    if(url.pathname==='/api/admin/zones/import'&&request.method==='POST'){
+      if(!sameOriginAllowed(request,url)){
+        return json({error:'Origin not allowed'},403);
+      }
+
+      if(!await relayAdminAuthorized(request,env)){
+        return json({error:'Authentication required'},401);
+      }
+
+      let body:Record<string,unknown>;
       try{
-        body=await request.json() as Record<string,unknown>;
-      }catch{}
-      const zoneId=crypto.randomUUID();
-      const adminToken=randomHex();
-      const mcpToken=randomHex();
+        body=JSON.parse(await bodyText(request,16*1024)) as Record<string,unknown>;
+      }catch{
+        return json({error:'Invalid JSON'},400);
+      }
+
+      const zoneId=typeof body.zoneId==='string'?body.zoneId.trim():'';
+      const zoneAdminToken=
+        typeof body.zoneAdminToken==='string'
+          ? body.zoneAdminToken.trim()
+          : '';
+
+      if(!validUuid(zoneId)||!zoneAdminToken){
+        return json({error:'Zone ID and Zone Admin Token are required'},400);
+      }
+
       const response=await zone(env,zoneId).fetch(
         new Request(
-          'https://zone.internal/create',
+          'https://zone.internal/info',
           {
-            method:'POST',
             headers:{
-              'Content-Type':'application/json',
-              'x-zone-admin-hash':await sha256(adminToken),
-              'x-zone-mcp-hash':await sha256(mcpToken)
-            },
-            body:JSON.stringify({
-              name:body.name
-            })
+              Authorization:`Bearer ${zoneAdminToken}`
+            }
           }
         )
       );
 
       if(!response.ok){
-        return response;
+        return json({error:'Zone not found or Zone Admin Token is invalid'},404);
       }
 
-      const created=await response.json() as {
+      const info=await response.json() as {
         name:string;
         createdAt:string;
       };
 
-      return json(
+      await registerZone(
+        env,
         {
           zoneId,
-          adminToken,
-          mcpToken,
-          mcpUrl:`${url.origin}/mcp/z/${zoneId}/${mcpToken}`,
-          name:created.name,
-          createdAt:created.createdAt,
-          adminUrl:`${url.origin}/admin`
+          name:info.name,
+          createdAt:info.createdAt
+        }
+      );
+
+      return json({
+        ok:true,
+        zone:{
+          zoneId,
+          name:info.name,
+          createdAt:info.createdAt
+        }
+      });
+    }
+
+    const adminZoneMatch=/^\/api\/admin\/zones\/([0-9a-f-]{36})$/.exec(url.pathname);
+    if(adminZoneMatch&&request.method==='GET'){
+      if(!sameOriginAllowed(request,url)){
+        return json({error:'Origin not allowed'},403);
+      }
+
+      if(!await relayAdminAuthorized(request,env)){
+        return json({error:'Authentication required'},401);
+      }
+
+      const zoneId=adminZoneMatch[1];
+      if(!validUuid(zoneId))return json({error:'Zone not found'},404);
+
+      return zoneInfo(
+        env,
+        zoneId,
+        {
+          'x-localmcp-relay-admin':'1'
+        }
+      );
+    }
+
+    const adminJoinCodeMatch=/^\/api\/admin\/zones\/([0-9a-f-]{36})\/join-codes$/.exec(url.pathname);
+    if(adminJoinCodeMatch&&request.method==='POST'){
+      if(!sameOriginAllowed(request,url)){
+        return json({error:'Origin not allowed'},403);
+      }
+
+      if(!await relayAdminAuthorized(request,env)){
+        return json({error:'Authentication required'},401);
+      }
+
+      const zoneId=adminJoinCodeMatch[1];
+      if(!validUuid(zoneId))return json({error:'Zone not found'},404);
+
+      let body='{}';
+      try{
+        body=await bodyText(request,16*1024)||'{}';
+        JSON.parse(body);
+      }catch{
+        return json({error:'Invalid JSON'},400);
+      }
+
+      const response=await zone(env,zoneId).fetch(
+        new Request(
+          'https://zone.internal/join-code',
+          {
+            method:'POST',
+            headers:{
+              'Content-Type':'application/json',
+              'x-localmcp-relay-admin':'1'
+            },
+            body
+          }
+        )
+      );
+
+      if(!response.ok)return response;
+
+      const data=await response.json() as {
+        secret:string;
+        expiresAt:string;
+      };
+
+      return json(
+        {
+          code:`${zoneId}.${data.secret}`,
+          expiresAt:data.expiresAt
         },
         201
       );
     }
 
+    const adminConnectorMatch=/^\/api\/admin\/zones\/([0-9a-f-]{36})\/connector$/.exec(url.pathname);
+    if(adminConnectorMatch&&request.method==='POST'){
+      if(!sameOriginAllowed(request,url)){
+        return json({error:'Origin not allowed'},403);
+      }
+
+      if(!await relayAdminAuthorized(request,env)){
+        return json({error:'Authentication required'},401);
+      }
+
+      const zoneId=adminConnectorMatch[1];
+      if(!validUuid(zoneId))return json({error:'Zone not found'},404);
+
+      const mcpToken=randomHex();
+      const response=await zone(env,zoneId).fetch(
+        new Request(
+          'https://zone.internal/mcp-token',
+          {
+            method:'POST',
+            headers:{
+              'x-localmcp-relay-admin':'1',
+              'x-zone-mcp-hash':await sha256(mcpToken)
+            }
+          }
+        )
+      );
+
+      if(!response.ok)return response;
+
+      return json({
+        mcpToken,
+        mcpUrl:`${url.origin}/mcp/z/${zoneId}/${mcpToken}`
+      });
+    }
+
+    const adminDeviceMatch=/^\/api\/admin\/zones\/([0-9a-f-]{36})\/devices\/([0-9a-f-]{36})$/.exec(url.pathname);
+    if(adminDeviceMatch&&(request.method==='PATCH'||request.method==='DELETE')){
+      if(!sameOriginAllowed(request,url)){
+        return json({error:'Origin not allowed'},403);
+      }
+
+      if(!await relayAdminAuthorized(request,env)){
+        return json({error:'Authentication required'},401);
+      }
+
+      const zoneId=adminDeviceMatch[1];
+      const deviceId=adminDeviceMatch[2];
+
+      if(!validUuid(zoneId)||!validUuid(deviceId)){
+        return json({error:'Device not found'},404);
+      }
+
+      if(request.method==='PATCH'){
+        let body:string;
+        try{
+          body=await bodyText(request,16*1024);
+          JSON.parse(body);
+        }catch{
+          return json({error:'Invalid JSON'},400);
+        }
+
+        return zone(env,zoneId).fetch(
+          new Request(
+            `https://zone.internal/devices/${deviceId}`,
+            {
+              method:'PATCH',
+              headers:{
+                'Content-Type':'application/json',
+                'x-localmcp-relay-admin':'1'
+              },
+              body
+            }
+          )
+        );
+      }
+
+      const infoResponse=await zone(env,zoneId).fetch(
+        new Request(
+          'https://zone.internal/info',
+          {
+            headers:{
+              'x-localmcp-relay-admin':'1'
+            }
+          }
+        )
+      );
+
+      if(!infoResponse.ok)return infoResponse;
+
+      const info=await infoResponse.json() as {
+        devices:Array<{deviceId:string}>;
+      };
+
+      if(!info.devices.some(device=>device.deviceId===deviceId)){
+        return json({error:'Device not found'},404);
+      }
+      const revoked=await relay(env,deviceId).fetch(
+        new Request(
+          'https://relay.internal/revoke',
+          {
+            method:'POST',
+            headers:{
+              'x-localmcp-internal':'1'
+            }
+          }
+        )
+      );
+
+      if(!revoked.ok){
+        return json({error:'Unable to revoke device credentials'},500);
+      }
+      return zone(env,zoneId).fetch(
+        new Request(
+          `https://zone.internal/devices/${deviceId}`,
+          {
+            method:'DELETE',
+            headers:{
+              'x-localmcp-relay-admin':'1'
+            }
+          }
+        )
+      );
+    }
+
+    if(url.pathname==='/api/zones'&&request.method==='POST'){
+      return new Response(null,{status:404});
+    }
     const zoneInfoMatch=/^\/api\/zones\/([0-9a-f-]{36})$/.exec(url.pathname);
     if(zoneInfoMatch&&request.method==='GET'){
       if(!sameOriginAllowed(request,url)){

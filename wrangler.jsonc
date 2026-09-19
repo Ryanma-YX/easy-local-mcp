@@ -8,12 +8,14 @@
   "durable_objects": {
     "bindings": [
       { "name": "RELAY", "class_name": "McpRelay" },
-      { "name": "ZONE", "class_name": "ZoneManager" }
+      { "name": "ZONE", "class_name": "ZoneManager" },
+      { "name": "ADMIN", "class_name": "RelayAdmin" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["McpRelay"] },
-    { "tag": "v2", "new_sqlite_classes": ["ZoneManager"] }
+    { "tag": "v2", "new_sqlite_classes": ["ZoneManager"] },
+    { "tag": "v3", "new_sqlite_classes": ["RelayAdmin"] }
   ],
   "env": {
     "test": {
@@ -21,7 +23,8 @@
       "durable_objects": {
         "bindings": [
           { "name": "RELAY", "class_name": "McpRelay" },
-          { "name": "ZONE", "class_name": "ZoneManager" }
+          { "name": "ZONE", "class_name": "ZoneManager" },
+          { "name": "ADMIN", "class_name": "RelayAdmin" }
         ]
       }
     }

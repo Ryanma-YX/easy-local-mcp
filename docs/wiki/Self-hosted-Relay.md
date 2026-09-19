@@ -47,6 +47,34 @@ npm ci
 npm run worker:deploy
 ```
 
+## Relay administration
+
+The Zone management dashboard at `/admin` is fail-closed. Configure a dedicated Relay administrator credential before it can be used:
+
+```text
+RELAY_ADMIN_TOKEN_HASH
+```
+
+Generate a strong token and its SHA-256 hash, for example:
+
+```sh
+node -e "const c=require('crypto');const t=c.randomBytes(32).toString('hex');console.log('ADMIN TOKEN: '+t);console.log('SHA256: '+c.createHash('sha256').update(t).digest('hex'))"
+```
+
+Keep the **ADMIN TOKEN** and configure only the **SHA256** value as the Worker secret/environment value `RELAY_ADMIN_TOKEN_HASH`.
+
+After deployment, opening:
+
+```text
+https://YOUR-WORKER.workers.dev/admin
+```
+
+shows only the Relay Admin login page until a valid administrator session is established. The browser session is stored in an `HttpOnly`, `Secure`, `SameSite=Strict` cookie, while the Relay stores only the session hash.
+
+The Relay Admin Token is separate from Zone Admin Tokens, Zone MCP connector tokens, Join Codes, and device Agent/MCP credentials.
+
+For the complete design, see [`docs/RELAY-CONTROL-PLANE-ARCHITECTURE.md`](../RELAY-CONTROL-PLANE-ARCHITECTURE.md).
+
 ## Registration protection
 
 A self-hosted Worker can use registration protection with:

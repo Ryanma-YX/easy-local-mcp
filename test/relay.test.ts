@@ -16,23 +16,30 @@ import {validatedWorkerOrigin} from '../src/relay.js';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import WebSocket from 'ws';
-import {adminPage} from '../worker/admin.js';
+import {adminLoginPage,adminPage,adminSetupRequiredPage} from '../worker/admin.js';
 
 const nodeCommand=(script:string)=>
   JSON.stringify(process.execPath)+' -e '+JSON.stringify(script);
 
-test('Zone admin page emits syntactically valid browser JavaScript',()=>{
-  const html=adminPage();
-  const start=html.indexOf('<script>');
-  const end=html.indexOf('</script>');
+test('Relay admin pages emit syntactically valid browser JavaScript',()=>{
+  for(const html of [adminLoginPage(),adminPage()]){
+    const start=html.indexOf('<script>');
+    const end=html.indexOf('</script>');
 
-  assert.ok(start>=0&&end>start);
-  const script=html.slice(start+'<script>'.length,end);
-  assert.doesNotThrow(()=>new Function(script));
-  assert.match(script,/Zone ID:.*\\nAdmin token:/s);
-  assert.match(script,/data\.code\+'\\nExpires: '/);
+    assert.ok(start>=0&&end>start);
+    const script=html.slice(start+'<script>'.length,end);
+    assert.doesNotThrow(()=>new Function(script));
+  }
+
+  assert.match(
+    adminSetupRequiredPage(),
+    /RELAY_ADMIN_TOKEN_HASH/
+  );
+  assert.match(
+    adminPage(),
+    /Zone Admin Token:.*\\n.*Zone MCP URL:/s
+  );
 });
-
 test('Worker origins require HTTPS except explicit loopback development origins',()=>{
   assert.equal(validatedWorkerOrigin('https://worker.example').href,'https://worker.example/');
   assert.equal(validatedWorkerOrigin('http://localhost:8787').href,'http://localhost:8787/');
@@ -141,6 +148,7 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
   const agentToken='b'.repeat(64);
   const mcpToken='c'.repeat(64);
   const registrationToken='d'.repeat(64);
+  const relayAdminToken='e'.repeat(64);
 
   const hash=(value:string)=>
     createHash('sha256')
@@ -166,7 +174,9 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
       '--var',
       `MCP_TOKEN_HASH:${hash(mcpToken)}`,
       '--var',
-      `REGISTRATION_TOKEN_HASH:${hash(registrationToken)}`
+      `REGISTRATION_TOKEN_HASH:${hash(registrationToken)}`,
+      '--var',
+      `RELAY_ADMIN_TOKEN_HASH:${hash(relayAdminToken)}`
     ],
     {
       stdio:[
@@ -211,22 +221,108 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
   ).json();
 
   assert.equal(health.registrationProtected,true);
+  assert.equal(health.relayAdminProtected,true);
   assert.equal(health.zones,true);
 
-  const adminPage=await fetch(origin+'/admin');
-  assert.equal(adminPage.status,200);
+  const publicAdmin=await fetch(origin+'/admin');
+  assert.equal(publicAdmin.status,200);
+  const publicAdminHtml=await publicAdmin.text();
+  assert.match(publicAdminHtml,/Sign in with the Relay Admin Token/);
+  assert.doesNotMatch(publicAdminHtml,/Relay-wide Control Plane/);
+
+  assert.equal(
+    (
+      await fetch(origin+'/api/admin/zones')
+    ).status,
+    401
+  );
+
+  assert.equal(
+    (
+      await fetch(
+        origin+'/api/admin/login',
+        {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({token:'wrong'})
+        }
+      )
+    ).status,
+    401
+  );
+
+  const adminLogin=await fetch(
+    origin+'/api/admin/login',
+    {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({token:relayAdminToken})
+    }
+  );
+
+  assert.equal(adminLogin.status,200);
+  const setCookie=adminLogin.headers.get('set-cookie')||'';
+  assert.match(setCookie,/localmcp_relay_admin=/);
+  assert.match(setCookie,/HttpOnly/i);
+  assert.match(setCookie,/Secure/i);
+  assert.match(setCookie,/SameSite=Strict/i);
+  const adminCookieHeader=setCookie.split(';')[0];
+
+  const authenticatedAdmin=await fetch(
+    origin+'/admin',
+    {
+      headers:{
+        Cookie:adminCookieHeader
+      }
+    }
+  );
+
+  assert.equal(authenticatedAdmin.status,200);
   assert.match(
-    await adminPage.text(),
-    /Easy Local MCP Zones/
+    await authenticatedAdmin.text(),
+    /Relay-wide Control Plane/
+  );
+
+  assert.equal(
+    (
+      await fetch(
+        origin+'/api/zones',
+        {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({name:'Public Zone'})
+        }
+      )
+    ).status,
+    404,
+    'Zone creation must fail closed outside the Relay Admin control plane'
+  );
+
+  assert.equal(
+    (
+      await fetch(
+        origin+'/api/zones',
+        {
+          method:'POST',
+          headers:{
+            'Content-Type':'application/json',
+            Authorization:`Bearer ${registrationToken}`
+          },
+          body:JSON.stringify({name:'Registration Token Zone'})
+        }
+      )
+    ).status,
+    404,
+    'Registration Token must not grant Zone creation authority'
   );
 
   const zoneCreate=await fetch(
-    origin+'/api/zones',
+    origin+'/api/admin/zones',
     {
       method:'POST',
       headers:{
         'Content-Type':'application/json',
-        Authorization:`Bearer ${registrationToken}`
+        Cookie:adminCookieHeader
       },
       body:JSON.stringify({
         name:'Test Zone'
@@ -244,22 +340,87 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     `${origin}/mcp/z/${createdZone.zoneId}/${createdZone.mcpToken}`
   );
   assert.equal(createdZone.name,'Test Zone');
-
   const zoneHeaders={
     'Content-Type':'application/json',
     Authorization:`Bearer ${createdZone.adminToken}`
   };
 
-  const joinCodeResponse=await fetch(
-    `${origin}/api/zones/${createdZone.zoneId}/join-codes`,
+
+  const registeredZones:any=await (
+    await fetch(
+      origin+'/api/admin/zones',
+      {
+        headers:{
+          Cookie:adminCookieHeader
+        }
+      }
+    )
+  ).json();
+
+  assert.equal(registeredZones.zones.length,1);
+  assert.equal(registeredZones.zones[0].zoneId,createdZone.zoneId);
+
+  assert.equal(
+    (
+      await fetch(
+        origin+'/api/admin/zones/import',
+        {
+          method:'POST',
+          headers:{
+            'Content-Type':'application/json',
+            Cookie:adminCookieHeader
+          },
+          body:JSON.stringify({
+            zoneId:createdZone.zoneId,
+            zoneAdminToken:'wrong'
+          })
+        }
+      )
+    ).status,
+    404
+  );
+
+  const importedZone=await fetch(
+    origin+'/api/admin/zones/import',
     {
       method:'POST',
-      headers:zoneHeaders,
+      headers:{
+        'Content-Type':'application/json',
+        Cookie:adminCookieHeader
+      },
+      body:JSON.stringify({
+        zoneId:createdZone.zoneId,
+        zoneAdminToken:createdZone.adminToken
+      })
+    }
+  );
+  assert.equal(importedZone.status,200);
+
+  const relayAdminZoneInfo:any=await (
+    await fetch(
+      `${origin}/api/admin/zones/${createdZone.zoneId}`,
+      {
+        headers:{
+          Cookie:adminCookieHeader
+        }
+      }
+    )
+  ).json();
+  assert.equal(relayAdminZoneInfo.name,'Test Zone');
+  const joinCodeResponse=await fetch(
+    `${origin}/api/admin/zones/${createdZone.zoneId}/join-codes`,
+    {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        Cookie:adminCookieHeader
+      },
       body:JSON.stringify({
         ttlMinutes:10
       })
     }
   );
+
 
   assert.equal(joinCodeResponse.status,201);
   const joinCode:any=await joinCodeResponse.json();
@@ -328,10 +489,13 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
   assert.equal(zoneInfo.devices[0].online,false);
 
   const renamed=await fetch(
-    `${origin}/api/zones/${createdZone.zoneId}/devices/${joinedDevice.deviceId}`,
+    `${origin}/api/admin/zones/${createdZone.zoneId}/devices/${joinedDevice.deviceId}`,
     {
       method:'PATCH',
-      headers:zoneHeaders,
+      headers:{
+        'Content-Type':'application/json',
+        Cookie:adminCookieHeader
+      },
       body:JSON.stringify({
         name:'Mac Mini PlayCover'
       })
@@ -352,7 +516,47 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
   ).json();
 
   assert.equal(zoneInfo.devices[0].name,'Mac Mini PlayCover');
+  assert.equal(zoneInfo.devices[0].name,'Mac Mini PlayCover');
 
+  const logout=await fetch(
+    origin+'/api/admin/logout',
+    {
+      method:'POST',
+      headers:{
+        Cookie:adminCookieHeader
+      }
+    }
+  );
+  assert.equal(logout.status,200);
+  assert.match(logout.headers.get('set-cookie')||'',/Max-Age=0/);
+
+  assert.equal(
+    (
+      await fetch(
+        origin+'/api/admin/zones',
+        {
+          headers:{
+            Cookie:adminCookieHeader
+          }
+        }
+      )
+    ).status,
+    401,
+    'logout must invalidate the Relay Admin session immediately'
+  );
+
+  const loggedOutAdmin=await fetch(
+    origin+'/admin',
+    {
+      headers:{
+        Cookie:adminCookieHeader
+      }
+    }
+  );
+  assert.match(
+    await loggedOutAdmin.text(),
+    /Sign in with the Relay Admin Token/
+  );
 
   const revoked=await fetch(
     `${origin}/api/zones/${createdZone.zoneId}/devices/${joinedDevice.deviceId}`,
