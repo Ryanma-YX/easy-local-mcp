@@ -21,7 +21,8 @@ for(const candidate of candidates.slice(0,-1)){
 
 const result=spawnSync(command,process.argv.slice(2),{
   stdio:'inherit',
-  shell:false
+  shell:false,
+  windowsHide:process.platform==='win32'
 });
 
 if(result.error){

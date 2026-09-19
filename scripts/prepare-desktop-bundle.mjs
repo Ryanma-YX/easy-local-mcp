@@ -57,13 +57,15 @@ let install;
 if(npmExec){
   install=spawnSync(process.execPath,[npmExec,'ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund'],{
     cwd:appDir,
-    stdio:'inherit'
+    stdio:'inherit',
+    windowsHide:process.platform==='win32'
   });
 }else{
   install=spawnSync(process.platform==='win32'?'npm.cmd':'npm',['ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund'],{
     cwd:appDir,
     stdio:'inherit',
-    shell:false
+    shell:false,
+    windowsHide:process.platform==='win32'
   });
 }
 

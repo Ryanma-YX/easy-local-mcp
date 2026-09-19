@@ -21,7 +21,8 @@ if(cargo){
 const result=spawnSync(process.execPath,[tauriCli,...process.argv.slice(2)],{
   stdio:'inherit',
   env,
-  shell:false
+  shell:false,
+  windowsHide:process.platform==='win32'
 });
 
 if(result.error){
