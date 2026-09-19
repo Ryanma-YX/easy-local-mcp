@@ -5,220 +5,102 @@
 <h1 align="center">Easy Local MCP</h1>
 
 <p align="center">
-  让 ChatGPT 通过 <strong>MCP (Model Context Protocol)</strong> 安全地使用你的本机文件、Shell、进程、Skills 与外部 MCP Server。
+  A secure local MCP bridge that lets ChatGPT work with your files, shell, processes, skills, workspaces, and external MCP servers.
 </p>
 
-## 项目说明
+<p align="center">
+  <a href="README.zh-CN.md">Chinese README</a>
+</p>
 
-**Easy Local MCP** 是基于 [daodao97/localmcp](https://github.com/daodao97/localmcp) 演进的独立分支。
+## What is Easy Local MCP?
 
-原项目提供了 Local MCP / Cloudflare Relay 的基础实现，本项目在此基础上重点增强：
+Easy Local MCP connects ChatGPT to capabilities on your own computer through the Model Context Protocol (MCP).
 
-- Windows 桌面客户端与系统托盘
-- 本地 Control Center
-- 更严格的默认权限与 LOCK / UNLOCK
-- 文件读写删除权限拆分
-- Shell / Process / External MCP feature gates
-- 本地 authenticated IPC
-- 首次启动 Relay 配置向导
-- Windows 后台进程隐藏控制台窗口
-- Tauri + NSIS 独立安装包
-- 内置 Node runtime，目标 PC 不需要安装 Node 或 Rust
-- 审计日志、凭证轮换与 Worker 注册保护
+```mermaid
+flowchart TD
+    A[ChatGPT] -->|MCP| B[Cloudflare Relay / Worker]
+    B -->|WebSocket| C[Easy Local MCP Agent]
+    C --> D[Files]
+    C --> E[Shell]
+    C --> F[Processes]
+    C --> G[Skills]
+    C --> H[External MCP]
+```
 
-本项目不再以向上游合并为目标，后续会以 **Easy Local MCP** 独立维护。
+The Agent makes the outbound connection, so you do not need a public IP address or an inbound port.
 
-> Easy Local MCP 仍遵循原项目的 MIT License，并保留原项目来源与版权信息。
+Easy Local MCP is based on [daodao97/localmcp](https://github.com/daodao97/localmcp) and is maintained as an independent project.
 
-## 为什么叫 Easy Local MCP
+## Highlights
 
-目标很简单：
-
-> **让安装、配置、连接 ChatGPT 和管理本机 MCP 权限变得尽量简单。**
-
-MCP 是 **Model Context Protocol** 的缩写，因此项目名称中统一写作全大写 **MCP**。
-
-## 功能
-
-Easy Local MCP 可以把以下本机能力安全地暴露给 MCP 客户端：
-
-- 文件浏览、搜索与读取
-- 文件创建、修改、移动与删除
-- Shell 命令
-- 持久进程
+- Windows desktop app with Control Center and system tray
+- Files: browse, search, read, create, edit, move, and delete
+- Shell commands and persistent processes
+- Multiple workspaces
 - Skills
-- 多 Workspace
-- 外部 MCP Server
-- 本地 Control Center
-- Agent Start / Stop / Restart
-- LOCK / UNLOCK
-- MCP URL reveal / credential rotation
-- Relay / Worker 切换
-- Audit history
+- External MCP servers through a stable gateway
+- Safe-by-default permission model
+- Local LOCK / UNLOCK gate for privileged operations
+- Authenticated local IPC
+- Audit logging and credential rotation
+- Public Relay for quick setup, with self-hosted options for long-term or sensitive use
+- Bundled Node runtime in the Windows installer
 
-危险能力默认不会全部开放。
+## Install
 
-Agent 启动后默认处于：
+### Windows
 
-```text
-LOCKED
-```
+Download the latest Windows x64 installer from [GitHub Releases](https://github.com/Ryanma-YX/easy-local-mcp/releases/latest).
 
-即使配置允许 Shell / 写文件 / Process，仍需要在本机明确 Unlock 后才能调用。
+The desktop installer includes the required runtime. The target PC does not need Node.js or Rust.
 
-> LOCK / UNLOCK 只控制特权工具的**执行授权**。已经在配置中启用的工具在 LOCKED 状态下仍会出现在 MCP 工具列表中，以便 ChatGPT 正常刷新连接器能力与权限；实际调用仍会被本机 LOCK 拒绝，直到用户明确 Unlock。
+### Build from source
 
----
-
-## Windows 安装
-
-### 推荐：安装桌面版
-
-构建后的安装包位于：
-
-```text
-src-tauri/target/release/bundle/nsis/
-```
-
-文件名类似：
-
-```text
-Easy Local MCP_0.3.11_x64-setup.exe
-```
-
-安装后直接启动：
-
-```text
-Easy Local MCP
-```
-
-桌面版已经内置：
-
-- Tauri native shell
-- Node runtime
-- Easy Local MCP compiled app
-- production dependencies
-
-因此目标 PC **不需要另外安装 Node、npm 或 Rust**。
-
-### 从源码构建 Windows 安装包
-
-需要：
+Requirements:
 
 - Node.js 22+
-- Rust stable
-- Visual Studio 2022 / MSVC
-- Windows SDK
-
-然后：
+- Rust stable for the desktop app
+- Visual Studio 2022 / MSVC and Windows SDK for the Windows installer
 
 ```powershell
 git clone https://github.com/Ryanma-YX/easy-local-mcp.git
 cd easy-local-mcp
-
 npm ci
 npm run desktop:bundle
 ```
 
-安装包会生成到：
+## Quick start
 
-```text
-src-tauri\target\release\bundle\nsis\
-```
+1. Start **Easy Local MCP**.
+2. Choose the public Relay for a quick start, or enter the URL of a Relay you control.
+3. Click **Save & Start Agent**.
+4. In Control Center, use **Reveal / Copy MCP URL**.
+5. Enable ChatGPT Developer Mode: [Open Developer Mode settings](https://chatgpt.com/#settings/Security?section=developer-mode).
+6. Create a connector: [Open Create Connector](https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins).
+7. Paste the complete MCP URL and set **Authentication** to **None**.
+8. Start a new chat and use the connector.
 
----
+> ChatGPT may hide the Create Connector entry in the normal UI. The direct link above opens the connector creation page.
 
-## 首次启动
+The complete MCP URL contains an access credential. Do not post it in issues, screenshots, logs, chats, or Git repositories.
 
-第一次启动桌面版时，**Agent 不会自动连接任何 Relay**。
+## Security model
 
-流程：
+The Agent starts **LOCKED**.
 
-1. Easy Local MCP 先只启动本机 Control Center
-2. 选择 Relay
-3. 默认公共 Relay 已预填，但此时不会联网注册
-4. 如使用自建 Relay，可填写自己的 Worker URL
-5. 如果 Worker 开启注册保护，可填写 Registration Token
-6. 点击：
+Configured privileged tools remain visible in the MCP tool list while locked so ChatGPT can discover and refresh connector capabilities correctly. Visibility does **not** grant execution permission.
 
-```text
-Save & Start Agent
-```
+While LOCKED:
 
-之后才会：
+- read-only capabilities remain available when enabled
+- configured privileged capabilities remain discoverable
+- file writes, deletes, shell commands, processes, and external MCP execution are denied
 
-```text
-保存 Relay
-→ 注册设备
-→ 启动 Agent
-→ 建立 Relay 连接
-→ 生成 MCP URL
-```
+Privileged operations become callable only after a local Unlock and are blocked again when the Unlock expires or the Agent is locked.
 
-### 公共 Relay
+For the full security model, see [SECURITY.md](SECURITY.md) and the [Security Model wiki page](https://github.com/Ryanma-YX/easy-local-mcp/wiki/Security-Model).
 
-公共 Relay 适合快速开始。
-
-但它属于**可信中继基础设施**，当前架构不是 ChatGPT 到本机 Agent 的端到端加密。
-
-对于：
-
-- 公司源码
-- ERP / MES
-- 内部文件
-- 凭证
-- 生产环境
-
-建议使用自己的 Relay / Cloudflare Worker。
-
----
-
-## 连接 ChatGPT
-
-Agent 启动后，可以在 Control Center 中：
-
-```text
-Reveal / Copy MCP URL
-```
-
-也可以使用兼容 CLI：
-
-```powershell
-localmcp url
-```
-
-或新的品牌命令：
-
-```powershell
-easy-local-mcp url
-```
-
-然后在 ChatGPT 中：
-
-1. 打开 Developer Mode：[点我打开开发者模式设置](https://chatgpt.com/#settings/Security?section=developer-mode)
-2. 新建 MCP / Connector：[点我打开连接器创建页面](https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins)
-3. 填入完整 MCP URL
-4. Authentication 选择：
-
-```text
-None
-```
-
-> 如果 ChatGPT 当前界面隐藏了“创建连接器 / Create Connector”入口，可以直接使用上面的连接器创建链接进入。
-
-完整 MCP URL 本身就是访问凭证，请不要：
-
-- 提交到 Git
-- 发到公开群组
-- 放进 issue
-- 放在公开截图
-- 写入普通日志
-
----
-
-## 常用操作
-
-新命令：
+## Common commands
 
 ```powershell
 easy-local-mcp ui
@@ -231,205 +113,45 @@ easy-local-mcp rotate
 easy-local-mcp stop
 ```
 
-为了兼容已有用户，旧命令仍然可用：
+The legacy `localmcp` command remains available for compatibility.
 
-```powershell
-localmcp
-localmcp ui
-localmcp status
-```
+## Self-host the Relay
 
-兼容状态目录和环境变量也继续保留：
+The prefilled public Relay is currently provided as an upstream/community shared service and is convenient for quick evaluation. Because it is operated outside this fork, this project cannot guarantee its availability, capacity, or long-term continuity.
 
-```text
-~/.localmcp/
-LOCALMCP_*
-```
-
-因此升级 Easy Local MCP 不要求现有用户迁移配置。
-
----
-
-## 自建 Relay
-
-对于敏感环境，建议使用自己的 Cloudflare Worker。
-
-部署原理：
-
-```text
-ChatGPT
-   ↓ MCP
-Cloudflare Worker / Relay
-   ↓ WebSocket
-Easy Local MCP Agent
-   ↓
-Local files / shell / tools
-```
-
-### 一键部署到 Cloudflare
+For regular use, company source code, ERP/MES data, internal files, credentials, or production environments, a Relay under your own control is recommended. You can host it on a machine you manage (with a reachable HTTPS endpoint), on your own VPS, or on your own Cloudflare Worker.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Ryanma-YX/easy-local-mcp)
 
-点击按钮后按 Cloudflare 提示登录、连接 GitHub 并完成 **Deploy**。部署完成后，在 Worker 的 **Settings → Domains & Routes** 中复制你的 `workers.dev` 地址，例如：
+After deployment, copy the Relay or Worker URL and configure it in Easy Local MCP.
 
-```text
-https://easy-local-mcp-relay.YOUR-SUBDOMAIN.workers.dev
-```
+See [Self-hosted Relay](https://github.com/Ryanma-YX/easy-local-mcp/wiki/Self-hosted-Relay) for deployment and registration-protection details.
 
-然后在 Easy Local MCP 首次启动界面填写这个 Worker URL。
-
-> 对安全要求更高的环境，建议为公开 Relay 配置 `REGISTRATION_TOKEN_HASH`，并在首次设置中填写对应的 raw registration token。Relay 只保存 hash；raw token 不进入 MCP URL，也不会写入审计日志。
-
-也可以使用 Wrangler 手动部署：
+## Development
 
 ```powershell
 npm ci
-npm run worker:deploy
-```
-
-Cloudflare Deploy Button 的工作方式可参考 [Cloudflare 官方说明](https://developers.cloudflare.com/workers/platform/deploy-buttons/)。
-
-如果 Worker 配置了：
-
-```text
-REGISTRATION_TOKEN_HASH
-```
-
-则在 Easy Local MCP 首次设置中填写对应 raw registration token。
-
-Registration Token：
-
-- 不进入 MCP URL
-- 不写入 localmcp.json
-- 不进入 audit log
-- 注册成功并持久化本地凭据后会删除临时 token
-
----
-
-## 安全模型
-
-Easy Local MCP 是一个**高权限本地 Agent**。
-
-它以当前操作系统用户权限运行。
-
-### 文件工具
-
-文件工具受 Workspace 边界限制。
-
-### Shell
-
-Shell **不是 Workspace sandbox**。
-
-Shell 可以访问当前 OS 用户能够访问的：
-
-- 其他目录
-- 其他盘符
-- 网络
-- 系统命令
-- 当前用户权限范围内的资源
-
-因此危险能力同时要求：
-
-```text
-功能已启用
-+
-Agent 已 Unlock
-```
-
-### Windows
-
-后台命令、Agent、Process 和 bundled Node host 默认使用隐藏窗口方式启动，避免 MCP 调用过程中反复闪出 CMD / PowerShell 黑框。
-
----
-
-## Desktop / Tray
-
-桌面版支持：
-
-- 原生 Control Center 窗口
-- 系统托盘
-- 左键托盘恢复窗口
-- Show
-- Hide
-- Quit
-- 关闭窗口隐藏到托盘
-
-Tray Quit：
-
-```text
-退出 Desktop UI
-关闭对应 Control Center host
-不停止独立运行的 Agent
-```
-
-Agent 与桌面 UI 生命周期相互独立。
-
----
-
-## 开发
-
-安装依赖：
-
-```powershell
-npm ci
-```
-
-检查：
-
-```powershell
 npm run check
-```
-
-测试：
-
-```powershell
 npm test
-```
-
-构建 Node：
-
-```powershell
 npm run build
 ```
 
-检查 Tauri：
+Desktop-related commands:
 
 ```powershell
 npm run tray:check
-```
-
-构建 Tray：
-
-```powershell
 npm run tray:build
-```
-
-构建 Windows 安装包：
-
-```powershell
 npm run desktop:bundle
 ```
 
----
+More documentation is available in the [project Wiki](https://github.com/Ryanma-YX/easy-local-mcp/wiki).
 
-## 项目来源与致谢
+## Project origin
 
-Easy Local MCP 基于：
+Easy Local MCP is derived from [daodao97/localmcp](https://github.com/daodao97/localmcp). Thanks to the original project for the Local MCP and Relay foundation.
 
-**daodao97/localmcp**
-
-https://github.com/daodao97/localmcp
-
-感谢原作者提供 Local MCP、Relay 与 Worker 的基础实现。
-
-本项目在其基础上继续开发，并作为独立分支维护。
-
-当前维护仓库：
-
-https://github.com/Ryanma-YX/easy-local-mcp
+This fork is maintained independently and is not intended to merge back upstream.
 
 ## License
 
-MIT License。
-
-详见 [LICENSE](LICENSE) 和 [SECURITY.md](SECURITY.md)。
+MIT. See [LICENSE](LICENSE).
