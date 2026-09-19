@@ -49,7 +49,7 @@ const descriptions:Partial<Record<N,string>>={
 };
 
 export async function createServer(config:Config,mcp:McpLoader,skills:Skill[],processes=new ProcessManager(),getRuntime=()=>({config,mcp,skills})){
-  const server=new Server({name:'easy-local-mcp',version:'0.3.11'},{capabilities:{tools:{}}});
+  const server=new Server({name:'easy-local-mcp',version:'0.4.0'},{capabilities:{tools:{}}});
 
   const definitions=async(current:Config):Promise<Tool[]>=>{
     const tools:Tool[]=[];

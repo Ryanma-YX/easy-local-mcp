@@ -86,7 +86,7 @@ async function registerDevice(workerUrl:string):Promise<Settings>{
           name:process.env.LOCALMCP_DEVICE_NAME?.trim()||hostname(),
           platform:process.platform,
           arch:process.arch,
-          version:'0.3.11'
+          version:'0.4.0'
         })
       : '{}',
     signal:AbortSignal.timeout(15000)
