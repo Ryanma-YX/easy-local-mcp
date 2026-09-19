@@ -11,11 +11,14 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {spawn,type ChildProcess} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {Assembly,frames,parseFrame} from '../src/relay-protocol.js';
+import {Assembly,frames,parseFrame,isConcurrentReadRequest} from '../src/relay-protocol.js';
 import {validatedWorkerOrigin} from '../src/relay.js';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import WebSocket from 'ws';
+
+const nodeCommand=(script:string)=>
+  JSON.stringify(process.execPath)+' -e '+JSON.stringify(script);
 
 test('Worker origins require HTTPS except explicit loopback development origins',()=>{
   assert.equal(validatedWorkerOrigin('https://worker.example').href,'https://worker.example/');
@@ -60,6 +63,28 @@ test('relay framing preserves large Unicode/image payloads and rejects invalid s
       total:2,
       data:''
     })
+  );
+
+  assert.equal(
+    isConcurrentReadRequest({
+      method:'tools/call',
+      params:{name:'read_process'}
+    }),
+    true
+  );
+  assert.equal(
+    isConcurrentReadRequest({
+      method:'tools/call',
+      params:{name:'list_processes'}
+    }),
+    true
+  );
+  assert.equal(
+    isConcurrentReadRequest({
+      method:'tools/call',
+      params:{name:'write_process'}
+    }),
+    false
   );
 });
 
@@ -360,8 +385,8 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
           write:true,
           delete:true
         },
-        shell:false,
-        processes:false,
+        shell:true,
+        processes:true,
         externalMcp:true
       },
       mcpServers:{}
@@ -521,7 +546,7 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
 
   tools=await client.listTools();
 
-  assert.equal(tools.tools.length,20);
+  assert.equal(tools.tools.length,26);
 
   const content='中文😀'.repeat(25000);
 
@@ -605,7 +630,7 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
 
   assert.equal(
     (await client.listTools()).tools.length,
-    20
+    26
   );
 
   const changedConfig=JSON.parse(originalConfig);
@@ -695,6 +720,105 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     ).tools[0].name,
     'echo'
   );
+
+  const trackedProcess:any=await client.callTool({
+    name:'start_process',
+    arguments:{
+      command:nodeCommand('setInterval(()=>{},1000)')
+    }
+  });
+  const trackedProcessInfo=JSON.parse(
+    trackedProcess.content[0].text
+  );
+
+  const saturatedExecutions=Array.from(
+    {length:8},
+    ()=>client.callTool({
+      name:'call_mcp_tool',
+      arguments:{
+        server:'fixture',
+        tool:'echo',
+        arguments:{
+          text:'saturate'
+        }
+      }
+    })
+  );
+
+  await new Promise(
+    resolveDelay=>setTimeout(resolveDelay,150)
+  );
+
+  const blockedExecution=await fetch(
+    originalUrl,
+    {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify({
+        jsonrpc:'2.0',
+        id:'capacity-probe',
+        method:'tools/call',
+        params:{
+          name:'write_file',
+          arguments:{
+            path:'capacity-probe.txt',
+            content:'must not execute'
+          }
+        }
+      })
+    }
+  );
+
+  assert.equal(
+    blockedExecution.status,
+    429,
+    'the eight execution requests must actually saturate the execution lane'
+  );
+
+  const readWhileSaturated=client.callTool({
+    name:'read_process',
+    arguments:{
+      processId:trackedProcessInfo.processId,
+      stdoutCursor:0,
+      stderrCursor:0
+    }
+  });
+  const listWhileSaturated=client.callTool({
+    name:'list_processes',
+    arguments:{}
+  });
+
+  assert.equal(
+    await Promise.race([
+      Promise.all([readWhileSaturated,listWhileSaturated])
+        .then(()=> 'control'),
+      saturatedExecutions[0].then(()=> 'execution')
+    ]),
+    'control',
+    'read-only process status must remain available when all execution slots are occupied'
+  );
+
+  const processStatus:any=await readWhileSaturated;
+  const processList:any=await listWhileSaturated;
+  assert.equal(
+    JSON.parse(processStatus.content[0].text).running,
+    true
+  );
+  assert.ok(
+    JSON.parse(processList.content[0].text).some(
+      (process:any)=>process.processId===trackedProcessInfo.processId
+    )
+  );
+
+  await Promise.all(saturatedExecutions);
+  await client.callTool({
+    name:'stop_process',
+    arguments:{
+      processId:trackedProcessInfo.processId
+    }
+  });
 
   const slowExternal=client.callTool({
     name:'call_mcp_tool',

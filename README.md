@@ -81,7 +81,7 @@ src-tauri/target/release/bundle/nsis/
 文件名类似：
 
 ```text
-Easy Local MCP_0.3.10_x64-setup.exe
+Easy Local MCP_0.3.11_x64-setup.exe
 ```
 
 安装后直接启动：

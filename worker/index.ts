@@ -2,7 +2,9 @@ import {
   Assembly,
   frames,
   parseFrame,
-  MAX_CONCURRENT_REQUESTS
+  MAX_CONCURRENT_REQUESTS,
+  MAX_CONTROL_REQUESTS,
+  isConcurrentReadRequest
 } from '../src/relay-protocol';
 
 interface Env {
@@ -374,11 +376,14 @@ export default {
   }
 };
 
+type PendingLane='execution'|'control';
+
 interface Pending {
   socket:WebSocket;
   assembly:Assembly;
   resolve:(response:Response)=>void;
   timer:ReturnType<typeof setTimeout>;
+  lane:PendingLane;
 }
 
 export class McpRelay {
@@ -388,6 +393,14 @@ export class McpRelay {
     ctx.setWebSocketAutoResponse(
       new WebSocketRequestResponsePair('ping','pong')
     );
+  }
+
+  private pendingInLane(lane:PendingLane){
+    let count=0;
+    for(const pending of this.pending.values()){
+      if(pending.lane===lane)count++;
+    }
+    return count;
   }
 
   async fetch(request:Request):Promise<Response>{
@@ -510,17 +523,33 @@ export class McpRelay {
       );
     }
 
-    if(this.pending.size>=MAX_CONCURRENT_REQUESTS){
+    const body=await request.text();
+    let parsedBody:unknown;
+    try{
+      parsedBody=JSON.parse(body);
+    }catch{
+      parsedBody=undefined;
+    }
+
+    const lane:PendingLane=isConcurrentReadRequest(parsedBody)
+      ? 'control'
+      : 'execution';
+    const limit=lane==='control'
+      ? MAX_CONTROL_REQUESTS
+      : MAX_CONCURRENT_REQUESTS;
+
+    if(this.pendingInLane(lane)>=limit){
       return json(
         {
-          error:`Local agent has reached the ${MAX_CONCURRENT_REQUESTS}-request concurrency limit. Do not automatically retry write operations.`
+          error:lane==='control'
+            ? `Local agent has reached the ${MAX_CONTROL_REQUESTS}-request control-query safety limit.`
+            : `Local agent has reached the ${MAX_CONCURRENT_REQUESTS}-request execution concurrency limit. Read-only status queries remain available; do not automatically retry write operations.`
         },
         429
       );
     }
 
     const id=crypto.randomUUID();
-    const body=await request.text();
 
     return new Promise<Response>(resolveResponse=>{
       const timer=setTimeout(
@@ -542,7 +571,8 @@ export class McpRelay {
           socket,
           assembly:new Assembly(),
           resolve:resolveResponse,
-          timer
+          timer,
+          lane
         }
       );
 

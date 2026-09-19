@@ -19,7 +19,7 @@ export class McpLoader {
     const inFlight=this.starting.get(name);if(inFlight)return inFlight;
     const cfg=this.servers[name];if(!cfg)throw new Error(`Unknown MCP server '${name}'`);
     const operation=(async()=>{
-      const client=new Client({name:`easy-local-mcp-${name}`,version:'0.3.10'});
+      const client=new Client({name:`easy-local-mcp-${name}`,version:'0.3.11'});
       const transport=new StdioClientTransport({command:cfg.command,args:cfg.args||[],env:cfg.env,stderr:'inherit'});
       const server={name,client,tools:[] as Tool[]};
       try{

@@ -11,6 +11,7 @@ import { McpLoader } from './mcp/loader.js';
 import { loadSkills } from './skills/loader.js';
 import { ProcessManager } from './process.js';
 import { secureWriteFile } from './security.js';
+import { isConcurrentReadRequest } from './relay-protocol.js';
 
 async function ensureInitialized(force=false){
   const {access,cp,mkdir,realpath}=await import('node:fs/promises');
@@ -100,37 +101,12 @@ function parseUnlockMinutes(args:string[]){
   return minutes;
 }
 
-const concurrentReadTools=new Set([
-  'workspace_info',
-  'list_workspaces',
-  'list_directory',
-  'workspace_tree',
-  'stat_path',
-  'find_files',
-  'search_files',
-  'read_file',
-  'read_file_lines',
-  'list_mcp_servers',
-  'list_skills',
-  'read_skill',
-  'read_process',
-  'list_processes'
-]);
-
 function requestCanRunDuringMutation(body:unknown){
   if(!body||typeof body!=='object'||Array.isArray(body))return false;
 
-  const request=body as {
-    method?:unknown;
-    params?:{
-      name?:unknown;
-    };
-  };
-
+  const request=body as {method?:unknown};
   if(request.method!=='tools/call')return true;
-
-  return typeof request.params?.name==='string'
-    && concurrentReadTools.has(request.params.name);
+  return isConcurrentReadRequest(body);
 }
 
 async function main(){

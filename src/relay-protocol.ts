@@ -2,6 +2,31 @@
 export const MAX_BYTES = 8 * 1024 * 1024;
 export const CHUNK_SIZE = 24000;
 export const MAX_CONCURRENT_REQUESTS = 8;
+export const MAX_CONTROL_REQUESTS = 64;
+export const CONCURRENT_READ_TOOLS = [
+  'workspace_info',
+  'list_workspaces',
+  'list_directory',
+  'workspace_tree',
+  'stat_path',
+  'find_files',
+  'search_files',
+  'read_file',
+  'read_file_lines',
+  'list_mcp_servers',
+  'list_skills',
+  'read_skill',
+  'read_process',
+  'list_processes'
+] as const;
+const concurrentReadTools=new Set<string>(CONCURRENT_READ_TOOLS);
+export function isConcurrentReadRequest(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const request=value as {method?:unknown;params?:{name?:unknown}};
+  return request.method === 'tools/call'
+    && typeof request.params?.name === 'string'
+    && concurrentReadTools.has(request.params.name);
+}
 export interface Frame { id: string; index: number; total: number; data: string }
 export function frames(id: string, value: unknown): string[] {
   const data = JSON.stringify(value);

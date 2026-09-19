@@ -1,6 +1,6 @@
 [package]
 name = "easy-local-mcp-tray"
-version = "0.3.10"
+version = "0.3.11"
 description = "Native tray shell for Easy Local MCP Control Center"
 edition = "2021"
 license = "MIT"
