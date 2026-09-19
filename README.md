@@ -110,6 +110,7 @@ easy-local-mcp unlock
 easy-local-mcp lock
 easy-local-mcp reload
 easy-local-mcp rotate
+easy-local-mcp join <zone-code>
 easy-local-mcp stop
 ```
 
@@ -126,6 +127,12 @@ For regular use, company source code, ERP/MES data, internal files, credentials,
 After deployment, copy the Relay or Worker URL and configure it in Easy Local MCP.
 
 See [Self-hosted Relay](https://github.com/Ryanma-YX/easy-local-mcp/wiki/Self-hosted-Relay) for deployment and registration-protection details.
+
+## Multi-Device Zones
+
+A Relay can group several devices into a Zone. Open `/admin` on a Zone-capable Relay to create a Zone, generate a one-time join code, view device status, rename devices, or revoke them. On a stopped device, stage the join with `localmcp join <zone-code>`, then start Easy Local MCP normally.
+
+The first Zone release is a management layer only: each device still keeps its own MCP URL. A unified Zone connector/router is a separate follow-up. See [Multi-Device Zones](https://github.com/Ryanma-YX/easy-local-mcp/wiki/Multi-Device-Zones).
 
 ## Development
 

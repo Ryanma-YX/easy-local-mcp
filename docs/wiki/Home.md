@@ -19,6 +19,7 @@ flowchart TD
 - [[Security Model]]
 - [[Configuration]]
 - [[Self-hosted Relay]]
+- [[Multi-Device Zones]]
 - [[Development]]
 - [[Troubleshooting]]
 

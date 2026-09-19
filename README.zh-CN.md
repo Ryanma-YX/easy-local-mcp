@@ -110,6 +110,7 @@ easy-local-mcp unlock
 easy-local-mcp lock
 easy-local-mcp reload
 easy-local-mcp rotate
+easy-local-mcp join <zone-code>
 easy-local-mcp stop
 ```
 
@@ -126,6 +127,12 @@ easy-local-mcp stop
 部署完成后，把自己的 Relay / Worker URL 填入 Easy Local MCP 即可。
 
 Registration Token、注册保护和部署细节请阅读 [Wiki：自建 Relay](https://github.com/Ryanma-YX/easy-local-mcp/wiki/Self-hosted-Relay)。
+
+## 多设备 Zone
+
+支持 Zone 的 Relay 可以把多台设备归入同一个管理区。打开 Relay 的 `/admin` 可以创建 Zone、生成一次性 Join Code、查看设备在线状态、重命名设备或撤销设备。设备必须先停止 Easy Local MCP，然后执行 `localmcp join <zone-code>`，再正常启动即可完成加入。
+
+第一版 Zone 只提供管理层能力：每台设备仍保留自己的 MCP URL。统一的 Zone 连接器 / 路由器会作为后续独立功能实现。详见 [Wiki：Multi-Device Zones](https://github.com/Ryanma-YX/easy-local-mcp/wiki/Multi-Device-Zones)。
 
 ## 开发
 

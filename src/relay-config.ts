@@ -8,6 +8,7 @@ const relayStateDir=resolve(homedir(),'.localmcp');
 export const relayConfigFile=resolve(relayStateDir,'relay.json');
 export const registeredWorkerFile=resolve(relayStateDir,'worker.json');
 export const pendingRegistrationTokenFile=resolve(relayStateDir,'registration-token.pending');
+export const pendingZoneJoinCodeFile=resolve(relayStateDir,'zone-join-code.pending');
 
 export interface RelaySetupState {
   configured:boolean;
@@ -179,5 +180,50 @@ export async function registrationToken(){
 export async function clearPendingRegistrationToken(){
   if(process.env.LOCALMCP_REGISTRATION_TOKEN===undefined){
     await rm(pendingRegistrationTokenFile,{force:true});
+  }
+}
+
+export async function savePendingZoneJoinCode(value:string|undefined){
+  if(process.env.LOCALMCP_ZONE_JOIN_CODE!==undefined){
+    if(value?.trim()){
+      throw new Error(
+        'Zone join code is controlled by LOCALMCP_ZONE_JOIN_CODE; remove the environment override before changing it locally.'
+      );
+    }
+    return;
+  }
+
+  const code=value?.trim()??'';
+  if(!code){
+    await rm(pendingZoneJoinCodeFile,{force:true});
+    return;
+  }
+
+  if(
+    !/^[0-9a-f-]{36}\.[a-f0-9]{48}$/i.test(code)
+    || code.length>128
+  ){
+    throw new Error('Invalid Zone join code');
+  }
+
+  await secureWriteFileAtomic(pendingZoneJoinCodeFile,code+'\n');
+}
+
+export async function zoneJoinCode(){
+  if(process.env.LOCALMCP_ZONE_JOIN_CODE!==undefined){
+    return process.env.LOCALMCP_ZONE_JOIN_CODE.trim()||undefined;
+  }
+
+  try{
+    return (await readFile(pendingZoneJoinCodeFile,'utf8')).trim()||undefined;
+  }catch(error:any){
+    if(error.code==='ENOENT')return undefined;
+    throw error;
+  }
+}
+
+export async function clearPendingZoneJoinCode(){
+  if(process.env.LOCALMCP_ZONE_JOIN_CODE===undefined){
+    await rm(pendingZoneJoinCodeFile,{force:true});
   }
 }

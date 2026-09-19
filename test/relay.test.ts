@@ -198,6 +198,185 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
   ).json();
 
   assert.equal(health.registrationProtected,true);
+  assert.equal(health.registrationProtected,true);
+  assert.equal(health.zones,true);
+
+  const adminPage=await fetch(origin+'/admin');
+  assert.equal(adminPage.status,200);
+  assert.match(
+    await adminPage.text(),
+    /Easy Local MCP Zones/
+  );
+
+  const zoneCreate=await fetch(
+    origin+'/api/zones',
+    {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        Authorization:`Bearer ${registrationToken}`
+      },
+      body:JSON.stringify({
+        name:'Test Zone'
+      })
+    }
+  );
+
+  assert.equal(zoneCreate.status,201);
+  const createdZone:any=await zoneCreate.json();
+  assert.match(createdZone.zoneId,/^[0-9a-f-]{36}$/);
+  assert.equal(createdZone.adminToken.length,64);
+  assert.equal(createdZone.name,'Test Zone');
+
+  const zoneHeaders={
+    'Content-Type':'application/json',
+    Authorization:`Bearer ${createdZone.adminToken}`
+  };
+
+  const joinCodeResponse=await fetch(
+    `${origin}/api/zones/${createdZone.zoneId}/join-codes`,
+    {
+      method:'POST',
+      headers:zoneHeaders,
+      body:JSON.stringify({
+        ttlMinutes:10
+      })
+    }
+  );
+
+  assert.equal(joinCodeResponse.status,201);
+  const joinCode:any=await joinCodeResponse.json();
+  assert.match(
+    joinCode.code,
+    /^[0-9a-f-]{36}\.[a-f0-9]{48}$/
+  );
+
+  const zoneJoinBody={
+    code:joinCode.code,
+    name:'MacMini-M4',
+    platform:'darwin',
+    arch:'arm64',
+    version:'0.3.11'
+  };
+
+  const zoneJoin=await fetch(
+    origin+'/join',
+    {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify(zoneJoinBody)
+    }
+  );
+
+  assert.equal(zoneJoin.status,201);
+  const joinedDevice:any=await zoneJoin.json();
+  assert.equal(joinedDevice.zoneId,createdZone.zoneId);
+  assert.match(joinedDevice.deviceId,/^[0-9a-f-]{36}$/);
+  assert.equal(joinedDevice.mcpToken.length,64);
+
+  assert.equal(
+    (
+      await fetch(
+        origin+'/join',
+        {
+          method:'POST',
+          headers:{
+            'Content-Type':'application/json'
+          },
+          body:JSON.stringify(zoneJoinBody)
+        }
+      )
+    ).status,
+    404,
+    'join codes must be one-time credentials'
+  );
+
+  const zoneInfoResponse=await fetch(
+    `${origin}/api/zones/${createdZone.zoneId}`,
+    {
+      headers:{
+        Authorization:`Bearer ${createdZone.adminToken}`
+      }
+    }
+  );
+
+  assert.equal(zoneInfoResponse.status,200);
+  let zoneInfo:any=await zoneInfoResponse.json();
+  assert.equal(zoneInfo.devices.length,1);
+  assert.equal(zoneInfo.devices[0].name,'MacMini-M4');
+  assert.equal(zoneInfo.devices[0].platform,'darwin');
+  assert.equal(zoneInfo.devices[0].arch,'arm64');
+  assert.equal(zoneInfo.devices[0].online,false);
+
+  const renamed=await fetch(
+    `${origin}/api/zones/${createdZone.zoneId}/devices/${joinedDevice.deviceId}`,
+    {
+      method:'PATCH',
+      headers:zoneHeaders,
+      body:JSON.stringify({
+        name:'Mac Mini PlayCover'
+      })
+    }
+  );
+
+  assert.equal(renamed.status,200);
+
+  zoneInfo=await (
+    await fetch(
+      `${origin}/api/zones/${createdZone.zoneId}`,
+      {
+        headers:{
+          Authorization:`Bearer ${createdZone.adminToken}`
+        }
+      }
+    )
+  ).json();
+
+  assert.equal(zoneInfo.devices[0].name,'Mac Mini PlayCover');
+
+  const revoked=await fetch(
+    `${origin}/api/zones/${createdZone.zoneId}/devices/${joinedDevice.deviceId}`,
+    {
+      method:'DELETE',
+      headers:{
+        Authorization:`Bearer ${createdZone.adminToken}`
+      }
+    }
+  );
+
+  assert.equal(revoked.status,200);
+
+  assert.equal(
+    (
+      await fetch(
+        joinedDevice.mcpUrl,
+        {
+          method:'POST',
+          headers:{
+            'Content-Type':'application/json'
+          },
+          body:'{}'
+        }
+      )
+    ).status,
+    404,
+    'revoking a Zone device must invalidate its MCP credential'
+  );
+
+  zoneInfo=await (
+    await fetch(
+      `${origin}/api/zones/${createdZone.zoneId}`,
+      {
+        headers:{
+          Authorization:`Bearer ${createdZone.adminToken}`
+        }
+      }
+    )
+  ).json();
+
+  assert.equal(zoneInfo.devices.length,0);
 
   const legacyUrl=`${origin}/mcp/${mcpToken}`;
 
