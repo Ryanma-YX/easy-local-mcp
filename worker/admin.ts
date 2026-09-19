@@ -57,7 +57,11 @@ button.danger{background:#fff0f0;color:#a72727}
 <div><label>Zone ID</label><input id="zoneId" autocomplete="off"></div>
 <div><label>Admin token</label><input id="adminToken" type="password" autocomplete="off"></div>
 </div>
-<div class="actions"><button id="loadZone">Load Zone</button><button id="makeJoin" class="secondary">Create Join Code</button></div>
+<div class="actions"><button id="loadZone">Load Zone</button><button id="makeJoin" class="secondary">Create Join Code</button><button id="rotateConnector" class="secondary">Rotate Connector</button></div>
+<div id="connectorResult" class="hidden">
+<p>The Zone connector URL can be configured once in ChatGPT. Rotating it immediately invalidates the previous Zone connector token.</p>
+<div id="connectorUrl" class="code"></div>
+</div>
 <div id="joinResult" class="hidden">
 <p>Join codes are one-time credentials and expire after 10 minutes.</p>
 <div id="joinCode" class="code"></div>
@@ -103,7 +107,7 @@ async function load(){
   const data=await api(zonePath(),{headers:authHeaders()});
   $('zonePanel').className='card';
   $('zoneName').textContent=data.name;
-  $('zoneMeta').textContent='Zone '+data.zoneId+' · '+data.devices.length+' device(s) · '+data.activeJoinCodes+' active join code(s)';
+  $('zoneMeta').textContent='Zone '+data.zoneId+' · '+data.devices.length+' device(s) · '+data.activeJoinCodes+' active join code(s) · Connector '+(data.connectorConfigured?'ready':'not configured');
   const host=$('devices');
   host.textContent='';
   if(!data.devices.length){
@@ -186,13 +190,31 @@ $('createZone').onclick=async()=>{
     $('zoneId').value=data.zoneId;
     $('adminToken').value=data.adminToken;
     $('created').className='';
-    $('createdValues').textContent='Zone ID: '+data.zoneId+'\\nAdmin token: '+data.adminToken;
+    $('createdValues').textContent='Zone ID: '+data.zoneId+'\\nAdmin token: '+data.adminToken+'\\nZone MCP URL: '+data.mcpUrl;
+    $('connectorResult').className='';
+    $('connectorUrl').textContent=data.mcpUrl;
     await load();
     message('Zone created. Save the administrator token.');
   }catch(error){message(error.message,true)}
 };
 
 $('loadZone').onclick=()=>load().catch(error=>message(error.message,true));
+
+$('rotateConnector').onclick=async()=>{
+  try{
+    hideMessage();
+    if(!confirm('Rotate this Zone connector token? The previous Zone MCP URL will stop working immediately.'))return;
+    const data=await api(zonePath()+'/connector',{
+      method:'POST',
+      headers:authHeaders(),
+      body:'{}'
+    });
+    $('connectorResult').className='';
+    $('connectorUrl').textContent=data.mcpUrl;
+    await load();
+    message('Zone connector rotated. Update ChatGPT to the new URL.');
+  }catch(error){message(error.message,true)}
+};
 
 $('makeJoin').onclick=async()=>{
   try{

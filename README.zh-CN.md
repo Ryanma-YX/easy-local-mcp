@@ -132,7 +132,7 @@ Registration Token、注册保护和部署细节请阅读 [Wiki：自建 Relay](
 
 支持 Zone 的 Relay 可以把多台设备归入同一个管理区。打开 Relay 的 `/admin` 可以创建 Zone、生成一次性 Join Code、查看设备在线状态、重命名设备或撤销设备。设备必须先停止 Easy Local MCP，然后执行 `localmcp join <zone-code>`，再正常启动即可完成加入。
 
-第一版 Zone 只提供管理层能力：每台设备仍保留自己的 MCP URL。统一的 Zone 连接器 / 路由器会作为后续独立功能实现。详见 [Wiki：Multi-Device Zones](https://github.com/Ryanma-YX/easy-local-mcp/wiki/Multi-Device-Zones)。
+Zone 现在也提供一个统一的 MCP Connector URL。ChatGPT 只需要连接这个 Zone URL，即可先调用 `list_devices`，然后在正常 LocalMCP 工具中通过必填的 `device` 参数选择目标设备。原有每台设备独立的 MCP URL 仍然保留兼容性，而且目标 Agent 仍会执行本机 LOCK 和功能权限检查。早期版本已经创建的 Zone 无需重建，只要在 `/admin` 中点击 **Rotate Connector** 即可生成统一 Connector URL。详见 [Wiki：Multi-Device Zones](https://github.com/Ryanma-YX/easy-local-mcp/wiki/Multi-Device-Zones)。
 
 ## 开发
 

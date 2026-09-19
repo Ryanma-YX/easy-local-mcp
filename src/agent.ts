@@ -253,12 +253,16 @@ async function rotateCredentials(){
     workerUrl:rotated.workerUrl,
     agentToken:rotated.agentToken,
     mcpToken:rotated.mcpToken,
-    deviceId:rotated.deviceId
+    deviceId:rotated.deviceId,
+    zoneId:settings.zoneId
   };
 
   await secureWriteFile(workerFile,JSON.stringify(settings,null,2));
   await writeConnectionFile();
-  await auditSecurity('credential_rotation',{deviceId:settings.deviceId});
+  await auditSecurity('credential_rotation',{
+    deviceId:settings.deviceId,
+    zoneId:settings.zoneId
+  });
 
   socket?.terminate();
 }

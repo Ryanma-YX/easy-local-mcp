@@ -1,4 +1,5 @@
 import { adminPage } from './admin';
+import { handleZoneMcp } from './zone-mcp';
 export { ZoneManager } from './zone';
 import {
   Assembly,
@@ -199,9 +200,9 @@ export default {
       try{
         body=await request.json() as Record<string,unknown>;
       }catch{}
-
       const zoneId=crypto.randomUUID();
       const adminToken=randomHex();
+      const mcpToken=randomHex();
       const response=await zone(env,zoneId).fetch(
         new Request(
           'https://zone.internal/create',
@@ -209,7 +210,8 @@ export default {
             method:'POST',
             headers:{
               'Content-Type':'application/json',
-              'x-zone-admin-hash':await sha256(adminToken)
+              'x-zone-admin-hash':await sha256(adminToken),
+              'x-zone-mcp-hash':await sha256(mcpToken)
             },
             body:JSON.stringify({
               name:body.name
@@ -231,6 +233,8 @@ export default {
         {
           zoneId,
           adminToken,
+          mcpToken,
+          mcpUrl:`${url.origin}/mcp/z/${zoneId}/${mcpToken}`,
           name:created.name,
           createdAt:created.createdAt,
           adminUrl:`${url.origin}/admin`
@@ -265,6 +269,7 @@ export default {
         name:string;
         createdAt:string;
         activeJoinCodes:number;
+        connectorConfigured:boolean;
         devices:Array<{
           deviceId:string;
           name:string;
@@ -300,14 +305,46 @@ export default {
           };
         })
       );
-
       return json({
         zoneId,
         name:info.name,
         createdAt:info.createdAt,
         activeJoinCodes:info.activeJoinCodes,
+        connectorConfigured:info.connectorConfigured,
         devices
       });
+    }
+
+    const connectorMatch=/^\/api\/zones\/([0-9a-f-]{36})\/connector$/.exec(url.pathname);
+    if(connectorMatch&&request.method==='POST'){
+      if(!sameOriginAllowed(request,url)){
+        return json({error:'Origin not allowed'},403);
+      }
+
+      const zoneId=connectorMatch[1];
+      if(!validUuid(zoneId))return json({error:'Zone not found'},404);
+
+      const mcpToken=randomHex();
+      const response=await zone(env,zoneId).fetch(
+        new Request(
+          'https://zone.internal/mcp-token',
+          {
+            method:'POST',
+            headers:{
+              Authorization:`Bearer ${bearer(request)}`,
+              'x-zone-mcp-hash':await sha256(mcpToken)
+            }
+          }
+        )
+      );
+
+      if(!response.ok)return response;
+
+      return json({
+        mcpToken,
+        mcpUrl:`${url.origin}/mcp/z/${zoneId}/${mcpToken}`
+      });
+
     }
 
     const joinCodeMatch=/^\/api\/zones\/([0-9a-f-]{36})\/join-codes$/.exec(url.pathname);
@@ -489,7 +526,6 @@ export default {
       );
 
       if(!consumed.ok)return consumed;
-
       try{
         const registered=await createRegistration(env,url.origin,deviceId);
         return json(
@@ -517,6 +553,41 @@ export default {
 
     if(request.headers.has('Origin')){
       return json({error:'Origin not allowed'},403);
+    }
+
+    const zoneMcpMatch=/^\/mcp\/z\/([0-9a-f-]{36})\/([a-f0-9]{64})$/.exec(url.pathname);
+
+    if(zoneMcpMatch){
+      if(request.method!=='POST'){
+        return new Response(
+          null,
+          {
+            status:405,
+            headers:{
+              Allow:'POST'
+            }
+          }
+        );
+      }
+
+      if(!request.headers.get('Content-Type')?.toLowerCase().includes('application/json')){
+        return json({error:'JSON required'},415);
+      }
+
+      let body:string;
+      try{
+        body=await bodyText(request,2*1024*1024);
+      }catch{
+        return json({error:'Invalid JSON or body exceeds 2 MiB'},400);
+      }
+
+      return handleZoneMcp(
+        request,
+        env,
+        zoneMcpMatch[1],
+        zoneMcpMatch[2],
+        body
+      );
     }
 
     if(url.pathname==='/register'&&request.method==='POST'){
@@ -845,6 +916,7 @@ export class McpRelay {
     }
 
     const legacy=request.headers.get('x-localmcp-legacy')==='1';
+    const internal=request.headers.get('x-localmcp-internal')==='1';
 
     if(url.pathname==='/agent'){
       if(!legacy){
@@ -881,7 +953,7 @@ export class McpRelay {
       );
     }
 
-    if(!legacy){
+    if(!legacy&&!internal){
       const expected=await this.ctx.storage.get<string>('mcpHash');
 
       if(
@@ -893,7 +965,6 @@ export class McpRelay {
         return new Response(null,{status:404});
       }
     }
-
     const socket=this.ctx.getWebSockets('agent')[0];
 
     if(!socket){

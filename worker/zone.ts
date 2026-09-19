@@ -16,6 +16,7 @@ interface ZoneState {
   name:string;
   createdAt:string;
   adminHash:string;
+  mcpHash?:string;
   devices:Record<string,ZoneDevice>;
   joinCodes:Record<string,JoinCodeRecord>;
 }
@@ -98,14 +99,12 @@ export class ZoneManager {
   }
 
   private async requireAdmin(request:Request,state:ZoneState){
-    if(!await authorized(bearer(request),state.adminHash)){
-      return false;
-    }
-    return true;
+    return await authorized(bearer(request),state.adminHash);
   }
 
   private pruneJoinCodes(state:ZoneState){
     const now=Date.now();
+
     for(const [key,record] of Object.entries(state.joinCodes)){
       if(Date.parse(record.expiresAt)<=now){
         delete state.joinCodes[key];
@@ -122,8 +121,14 @@ export class ZoneManager {
       }
 
       const adminHash=request.headers.get('x-zone-admin-hash')||'';
+      const mcpHash=request.headers.get('x-zone-mcp-hash')||'';
+
       if(!/^[a-f0-9]{64}$/.test(adminHash)){
         return json({error:'Invalid admin credential'},400);
+      }
+
+      if(mcpHash&&!/^[a-f0-9]{64}$/.test(mcpHash)){
+        return json({error:'Invalid MCP credential'},400);
       }
 
       let body:Record<string,unknown>={};
@@ -135,12 +140,22 @@ export class ZoneManager {
         name:cleanName(body.name,'LocalMCP Zone'),
         createdAt:new Date().toISOString(),
         adminHash,
+        ...(mcpHash?{mcpHash}:{}),
         devices:{},
         joinCodes:{}
       };
 
       await this.ctx.storage.put('state',state);
-      return json({ok:true,name:state.name,createdAt:state.createdAt},201);
+
+      return json(
+        {
+          ok:true,
+          name:state.name,
+          createdAt:state.createdAt,
+          connectorConfigured:!!state.mcpHash
+        },
+        201
+      );
     }
 
     const state=await this.state();
@@ -160,8 +175,39 @@ export class ZoneManager {
         name:state.name,
         createdAt:state.createdAt,
         devices:Object.values(state.devices),
-        activeJoinCodes:Object.keys(state.joinCodes).length
+        activeJoinCodes:Object.keys(state.joinCodes).length,
+        connectorConfigured:!!state.mcpHash
       });
+    }
+
+    if(url.pathname==='/mcp-context'&&request.method==='GET'){
+      if(!await authorized(
+        request.headers.get('x-zone-mcp-token')||'',
+        state.mcpHash
+      )){
+        return new Response(null,{status:404});
+      }
+
+      return json({
+        name:state.name,
+        createdAt:state.createdAt,
+        devices:Object.values(state.devices)
+      });
+    }
+
+    if(url.pathname==='/mcp-token'&&request.method==='POST'){
+      if(!await this.requireAdmin(request,state)){
+        return new Response(null,{status:404});
+      }
+
+      const mcpHash=request.headers.get('x-zone-mcp-hash')||'';
+      if(!/^[a-f0-9]{64}$/.test(mcpHash)){
+        return json({error:'Invalid MCP credential'},400);
+      }
+
+      state.mcpHash=mcpHash;
+      await this.ctx.storage.put('state',state);
+      return json({ok:true});
     }
 
     if(url.pathname==='/join-code'&&request.method==='POST'){
@@ -227,6 +273,13 @@ export class ZoneManager {
         delete state.joinCodes[key];
         await this.ctx.storage.put('state',state);
         return new Response(null,{status:404});
+      }
+
+      if(
+        !state.devices[deviceId]
+        && Object.keys(state.devices).length>=32
+      ){
+        return json({error:'Zone device limit reached'},409);
       }
 
       delete state.joinCodes[key];
@@ -306,7 +359,11 @@ export class ZoneManager {
       return json({ok:true,device});
     }
 
-    if(deviceMatch&&request.method==='POST'&&request.headers.get('x-localmcp-internal')==='remove'){
+    if(
+      deviceMatch
+      && request.method==='POST'
+      && request.headers.get('x-localmcp-internal')==='remove'
+    ){
       delete state.devices[deviceMatch[1]];
       await this.ctx.storage.put('state',state);
       return json({ok:true});
