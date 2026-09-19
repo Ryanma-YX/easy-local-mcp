@@ -3,6 +3,7 @@ import { mkdir, readFile, unlink } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer as createNetServer } from 'node:net';
+import { hostname } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { stateDir, logFile, maskMcpUrl, serveControl } from './lifecycle.js';
@@ -17,9 +18,11 @@ import {
 import { DEFAULT_PUBLIC_WORKER_URL, validatedWorkerOrigin } from './relay.js';
 import {
   clearPendingRegistrationToken,
+  clearPendingZoneJoinCode,
   configuredRelayUrl,
   registrationToken,
-  saveRelayPreference
+  saveRelayPreference,
+  zoneJoinCode
 } from './relay-config.js';
 import {
   auditSecurity,
@@ -29,12 +32,12 @@ import {
   secureWriteFile,
   unlockLocal
 } from './security.js';
-
 interface Settings {
   workerUrl:string;
   agentToken:string;
   mcpToken:string;
   deviceId?:string;
+  zoneId?:string;
 }
 
 await mkdir(stateDir,{recursive:true,mode:0o700});
@@ -60,8 +63,9 @@ async function registerDevice(workerUrl:string):Promise<Settings>{
   const headers:Record<string,string>={
     'Content-Type':'application/json'
   };
+  const joinCode=await zoneJoinCode();
+  const token=joinCode?undefined:await registrationToken();
 
-  const token=await registrationToken();
   if(token){
     headers.Authorization=`Bearer ${token}`;
   }
@@ -72,16 +76,27 @@ async function registerDevice(workerUrl:string):Promise<Settings>{
     );
   }
 
-  const response=await fetch(new URL('/register',target),{
+  const endpoint=joinCode?'/join':'/register';
+  const response=await fetch(new URL(endpoint,target),{
     method:'POST',
     headers,
-    body:'{}',
+    body:joinCode
+      ? JSON.stringify({
+          code:joinCode,
+          name:process.env.LOCALMCP_DEVICE_NAME?.trim()||hostname(),
+          platform:process.platform,
+          arch:process.arch,
+          version:'0.3.11'
+        })
+      : '{}',
     signal:AbortSignal.timeout(15000)
   });
 
   if(!response.ok){
     throw new Error(
-      `Worker registration failed (${response.status}). Check the Relay URL and registration token in the Control Center, or the LOCALMCP_WORKER_URL / LOCALMCP_REGISTRATION_TOKEN environment overrides.`
+      joinCode
+        ? `Zone join failed (${response.status}). The join code may be invalid, expired, or already used.`
+        : `Worker registration failed (${response.status}). Check the Relay URL and registration token in the Control Center, or the LOCALMCP_WORKER_URL / LOCALMCP_REGISTRATION_TOKEN environment overrides.`
     );
   }
 
@@ -99,10 +114,10 @@ async function registerDevice(workerUrl:string):Promise<Settings>{
     workerUrl:registered.workerUrl,
     agentToken:registered.agentToken,
     mcpToken:registered.mcpToken,
-    deviceId:registered.deviceId
+    deviceId:registered.deviceId,
+    zoneId:registered.zoneId
   };
 }
-
 async function loadSettings(){
   const desiredWorkerUrl=await configuredRelayUrl();
   const desiredOrigin=validatedWorkerOrigin(desiredWorkerUrl);
@@ -121,17 +136,24 @@ async function loadSettings(){
     settings=await registerDevice(desiredOrigin.href);
     await secureWriteFile(workerFile,JSON.stringify(settings,null,2));
     await clearPendingRegistrationToken();
+    await clearPendingZoneJoinCode();
 
     await auditSecurity('worker_registration',{
       deviceId:settings.deviceId,
+      zoneId:settings.zoneId,
       publicRelay:desiredOrigin.href===validatedWorkerOrigin(DEFAULT_PUBLIC_WORKER_URL).href
     });
 
-    console.error(`Registered Easy Local MCP device ${settings.deviceId??'legacy'}.`);
+    console.error(
+      settings.zoneId
+        ? `Joined Easy Local MCP Zone ${settings.zoneId} as device ${settings.deviceId??'unknown'}.`
+        : `Registered Easy Local MCP device ${settings.deviceId??'legacy'}.`
+    );
   }
 
   origin=desiredOrigin;
 }
+
 
 function currentMcpUrl(){
   if(!settings||!origin)return null;
@@ -142,7 +164,6 @@ function currentMcpUrl(){
 
   return new URL(path,origin).href;
 }
-
 async function writeConnectionFile(){
   mcpUrl=currentMcpUrl();
 
@@ -157,6 +178,7 @@ async function writeConnectionFile(){
       authentication:'none',
       transport:'worker-websocket',
       deviceId:settings.deviceId,
+      zoneId:settings.zoneId,
       root:process.env.LOCALMCP_ROOT||process.cwd()
     },null,2)
   );
@@ -177,14 +199,17 @@ async function reregisterDevice(workerUrl:string){
   await secureWriteFile(workerFile,JSON.stringify(settings,null,2));
   await writeConnectionFile();
   await clearPendingRegistrationToken();
+  await clearPendingZoneJoinCode();
   await auditSecurity('worker_registration',{
     deviceId:settings.deviceId,
+    zoneId:settings.zoneId,
     publicRelay:origin.href===validatedWorkerOrigin(DEFAULT_PUBLIC_WORKER_URL).href
   });
 
   ready=false;
   socket?.terminate();
 }
+
 
 async function rotateCredentials(){
   if(!settings||!origin){
@@ -228,12 +253,16 @@ async function rotateCredentials(){
     workerUrl:rotated.workerUrl,
     agentToken:rotated.agentToken,
     mcpToken:rotated.mcpToken,
-    deviceId:rotated.deviceId
+    deviceId:rotated.deviceId,
+    zoneId:settings.zoneId
   };
 
   await secureWriteFile(workerFile,JSON.stringify(settings,null,2));
   await writeConnectionFile();
-  await auditSecurity('credential_rotation',{deviceId:settings.deviceId});
+  await auditSecurity('credential_rotation',{
+    deviceId:settings.deviceId,
+    zoneId:settings.zoneId
+  });
 
   socket?.terminate();
 }

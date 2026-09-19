@@ -5,6 +5,25 @@
   "compatibility_date": "2026-09-06",
   "workers_dev": true,
   "observability": { "enabled": false },
-  "durable_objects": { "bindings": [{ "name": "RELAY", "class_name": "McpRelay" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["McpRelay"] }]
+  "durable_objects": {
+    "bindings": [
+      { "name": "RELAY", "class_name": "McpRelay" },
+      { "name": "ZONE", "class_name": "ZoneManager" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["McpRelay"] },
+    { "tag": "v2", "new_sqlite_classes": ["ZoneManager"] }
+  ],
+  "env": {
+    "test": {
+      "name": "easy-local-mcp-test",
+      "durable_objects": {
+        "bindings": [
+          { "name": "RELAY", "class_name": "McpRelay" },
+          { "name": "ZONE", "class_name": "ZoneManager" }
+        ]
+      }
+    }
+  }
 }

@@ -6,6 +6,7 @@ dist/
 *.tgz
 localmcp.json
 .wrangler/
+.wrangler-local-zone/
 .dev.vars*
 src-tauri/target/
 src-tauri/gen/

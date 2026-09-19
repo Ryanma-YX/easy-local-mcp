@@ -188,6 +188,33 @@ async function main(){
     return;
   }
 
+  if(mode==='join'){
+    await ensureInitialized();
+
+    const code=process.argv[3]?.trim()||'';
+    if(!code){
+      throw new Error('Usage: localmcp join <zone-code>');
+    }
+
+    const {status}=await import('./lifecycle.js');
+    const current=await status();
+    if(current.status==='running'){
+      throw new Error('Stop Easy Local MCP before joining a Zone.');
+    }
+
+    const {rm}=await import('node:fs/promises');
+    const {
+      registeredWorkerFile,
+      savePendingZoneJoinCode
+    }=await import('./relay-config.js');
+
+    await savePendingZoneJoinCode(code);
+    await rm(registeredWorkerFile,{force:true});
+
+    console.log('Zone join staged. Start Easy Local MCP to complete registration.');
+    return;
+  }
+
   if(['start','stop','reload','status','url','unlock','lock','rotate'].includes(mode)){
     const {
       control,

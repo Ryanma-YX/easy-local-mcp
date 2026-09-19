@@ -1,3 +1,6 @@
+import { adminPage } from './admin';
+import { handleZoneMcp } from './zone-mcp';
+export { ZoneManager } from './zone';
 import {
   Assembly,
   frames,
@@ -6,9 +9,9 @@ import {
   MAX_CONTROL_REQUESTS,
   isConcurrentReadRequest
 } from '../src/relay-protocol';
-
 interface Env {
   RELAY:DurableObjectNamespace;
+  ZONE:DurableObjectNamespace;
   MCP_TOKEN_HASH?:string;
   AGENT_TOKEN_HASH?:string;
   REGISTRATION_TOKEN_HASH?:string;
@@ -108,6 +111,19 @@ function relay(env:Env,deviceId:string){
   return env.RELAY.get(env.RELAY.idFromName(deviceId));
 }
 
+function zone(env:Env,zoneId:string){
+  return env.ZONE.get(env.ZONE.idFromName(zoneId));
+}
+
+function validUuid(value:string){
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function sameOriginAllowed(request:Request,url:URL){
+  const origin=request.headers.get('Origin');
+  return !origin||origin===url.origin;
+}
+
 async function createRegistration(
   env:Env,
   origin:string,
@@ -130,25 +146,17 @@ async function createRegistration(
   );
 
   if(!response.ok){
-    return {
-      response:json({error:'Registration failed'},500)
-    };
+    throw new Error('Registration failed');
   }
 
   return {
-    response:json(
-      {
-        deviceId,
-        agentToken,
-        mcpToken,
-        workerUrl:origin,
-        mcpUrl:`${origin}/mcp/${deviceId}/${mcpToken}`
-      },
-      201
-    )
+    deviceId,
+    agentToken,
+    mcpToken,
+    workerUrl:origin,
+    mcpUrl:`${origin}/mcp/${deviceId}/${mcpToken}`
   };
 }
-
 export default {
   async fetch(request:Request,env:Env):Promise<Response>{
     const url=new URL(request.url);
@@ -158,12 +166,428 @@ export default {
         ok:true,
         service:'easy-local-mcp-relay',
         registration:true,
-        registrationProtected:!!env.REGISTRATION_TOKEN_HASH
+        registrationProtected:!!env.REGISTRATION_TOKEN_HASH,
+        zones:true
       });
+    }
+
+    if(url.pathname==='/admin'&&request.method==='GET'){
+      return new Response(
+        adminPage(),
+        {
+          headers:{
+            'Content-Type':'text/html; charset=utf-8',
+            'Cache-Control':'no-store',
+            'Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+          }
+        }
+      );
+    }
+
+    if(url.pathname==='/api/zones'&&request.method==='POST'){
+      if(!sameOriginAllowed(request,url)){
+        return json({error:'Origin not allowed'},403);
+      }
+
+      if(
+        env.REGISTRATION_TOKEN_HASH
+        && !await authorized(bearer(request),env.REGISTRATION_TOKEN_HASH)
+      ){
+        return new Response(null,{status:404});
+      }
+
+      let body:Record<string,unknown>={};
+      try{
+        body=await request.json() as Record<string,unknown>;
+      }catch{}
+      const zoneId=crypto.randomUUID();
+      const adminToken=randomHex();
+      const mcpToken=randomHex();
+      const response=await zone(env,zoneId).fetch(
+        new Request(
+          'https://zone.internal/create',
+          {
+            method:'POST',
+            headers:{
+              'Content-Type':'application/json',
+              'x-zone-admin-hash':await sha256(adminToken),
+              'x-zone-mcp-hash':await sha256(mcpToken)
+            },
+            body:JSON.stringify({
+              name:body.name
+            })
+          }
+        )
+      );
+
+      if(!response.ok){
+        return response;
+      }
+
+      const created=await response.json() as {
+        name:string;
+        createdAt:string;
+      };
+
+      return json(
+        {
+          zoneId,
+          adminToken,
+          mcpToken,
+          mcpUrl:`${url.origin}/mcp/z/${zoneId}/${mcpToken}`,
+          name:created.name,
+          createdAt:created.createdAt,
+          adminUrl:`${url.origin}/admin`
+        },
+        201
+      );
+    }
+
+    const zoneInfoMatch=/^\/api\/zones\/([0-9a-f-]{36})$/.exec(url.pathname);
+    if(zoneInfoMatch&&request.method==='GET'){
+      if(!sameOriginAllowed(request,url)){
+        return json({error:'Origin not allowed'},403);
+      }
+
+      const zoneId=zoneInfoMatch[1];
+      if(!validUuid(zoneId))return json({error:'Zone not found'},404);
+
+      const response=await zone(env,zoneId).fetch(
+        new Request(
+          'https://zone.internal/info',
+          {
+            headers:{
+              Authorization:`Bearer ${bearer(request)}`
+            }
+          }
+        )
+      );
+
+      if(!response.ok)return response;
+
+      const info=await response.json() as {
+        name:string;
+        createdAt:string;
+        activeJoinCodes:number;
+        connectorConfigured:boolean;
+        devices:Array<{
+          deviceId:string;
+          name:string;
+          platform?:string;
+          arch?:string;
+          version?:string;
+          joinedAt:string;
+        }>;
+      };
+
+      const devices=await Promise.all(
+        info.devices.map(async device=>{
+          const status=await relay(env,device.deviceId).fetch(
+            new Request(
+              'https://relay.internal/status',
+              {
+                headers:{
+                  'x-localmcp-internal':'1'
+                }
+              }
+            )
+          );
+
+          let online=false;
+          if(status.ok){
+            const data=await status.json() as {online?:boolean};
+            online=data.online===true;
+          }
+
+          return {
+            ...device,
+            online
+          };
+        })
+      );
+      return json({
+        zoneId,
+        name:info.name,
+        createdAt:info.createdAt,
+        activeJoinCodes:info.activeJoinCodes,
+        connectorConfigured:info.connectorConfigured,
+        devices
+      });
+    }
+
+    const connectorMatch=/^\/api\/zones\/([0-9a-f-]{36})\/connector$/.exec(url.pathname);
+    if(connectorMatch&&request.method==='POST'){
+      if(!sameOriginAllowed(request,url)){
+        return json({error:'Origin not allowed'},403);
+      }
+
+      const zoneId=connectorMatch[1];
+      if(!validUuid(zoneId))return json({error:'Zone not found'},404);
+
+      const mcpToken=randomHex();
+      const response=await zone(env,zoneId).fetch(
+        new Request(
+          'https://zone.internal/mcp-token',
+          {
+            method:'POST',
+            headers:{
+              Authorization:`Bearer ${bearer(request)}`,
+              'x-zone-mcp-hash':await sha256(mcpToken)
+            }
+          }
+        )
+      );
+
+      if(!response.ok)return response;
+
+      return json({
+        mcpToken,
+        mcpUrl:`${url.origin}/mcp/z/${zoneId}/${mcpToken}`
+      });
+
+    }
+
+    const joinCodeMatch=/^\/api\/zones\/([0-9a-f-]{36})\/join-codes$/.exec(url.pathname);
+    if(joinCodeMatch&&request.method==='POST'){
+      if(!sameOriginAllowed(request,url)){
+        return json({error:'Origin not allowed'},403);
+      }
+
+      const zoneId=joinCodeMatch[1];
+      if(!validUuid(zoneId))return json({error:'Zone not found'},404);
+
+      let body='{}';
+      try{
+        body=await bodyText(request,16*1024)||'{}';
+        JSON.parse(body);
+      }catch{
+        return json({error:'Invalid JSON'},400);
+      }
+
+      const response=await zone(env,zoneId).fetch(
+        new Request(
+          'https://zone.internal/join-code',
+          {
+            method:'POST',
+            headers:{
+              'Content-Type':'application/json',
+              Authorization:`Bearer ${bearer(request)}`
+            },
+            body
+          }
+        )
+      );
+
+      if(!response.ok)return response;
+
+      const data=await response.json() as {
+        secret:string;
+        expiresAt:string;
+      };
+
+      return json(
+        {
+          code:`${zoneId}.${data.secret}`,
+          expiresAt:data.expiresAt
+        },
+        201
+      );
+    }
+
+    const zoneDeviceMatch=/^\/api\/zones\/([0-9a-f-]{36})\/devices\/([0-9a-f-]{36})$/.exec(url.pathname);
+    if(zoneDeviceMatch&&(request.method==='PATCH'||request.method==='DELETE')){
+      if(!sameOriginAllowed(request,url)){
+        return json({error:'Origin not allowed'},403);
+      }
+
+      const zoneId=zoneDeviceMatch[1];
+      const deviceId=zoneDeviceMatch[2];
+      if(!validUuid(zoneId)||!validUuid(deviceId)){
+        return json({error:'Device not found'},404);
+      }
+
+      if(request.method==='PATCH'){
+        let body:string;
+        try{
+          body=await bodyText(request,16*1024);
+          JSON.parse(body);
+        }catch{
+          return json({error:'Invalid JSON'},400);
+        }
+
+        return zone(env,zoneId).fetch(
+          new Request(
+            `https://zone.internal/devices/${deviceId}`,
+            {
+              method:'PATCH',
+              headers:{
+                'Content-Type':'application/json',
+                Authorization:`Bearer ${bearer(request)}`
+              },
+              body
+            }
+          )
+        );
+      }
+
+      const infoResponse=await zone(env,zoneId).fetch(
+        new Request(
+          'https://zone.internal/info',
+          {
+            headers:{
+              Authorization:`Bearer ${bearer(request)}`
+            }
+          }
+        )
+      );
+
+      if(!infoResponse.ok)return infoResponse;
+
+      const info=await infoResponse.json() as {
+        devices:Array<{deviceId:string}>;
+      };
+
+      if(!info.devices.some(device=>device.deviceId===deviceId)){
+        return json({error:'Device not found'},404);
+      }
+
+      const revoked=await relay(env,deviceId).fetch(
+        new Request(
+          'https://relay.internal/revoke',
+          {
+            method:'POST',
+            headers:{
+              'x-localmcp-internal':'1'
+            }
+          }
+        )
+      );
+
+      if(!revoked.ok){
+        return json({error:'Unable to revoke device credentials'},500);
+      }
+
+      return zone(env,zoneId).fetch(
+        new Request(
+          `https://zone.internal/devices/${deviceId}`,
+          {
+            method:'DELETE',
+            headers:{
+              Authorization:`Bearer ${bearer(request)}`
+            }
+          }
+        )
+      );
+    }
+
+    if(url.pathname==='/join'&&request.method==='POST'){
+      if(request.headers.has('Origin')){
+        return json({error:'Origin not allowed'},403);
+      }
+
+      let body:Record<string,unknown>;
+      try{
+        body=JSON.parse(await bodyText(request,32*1024)) as Record<string,unknown>;
+      }catch{
+        return json({error:'Invalid JSON'},400);
+      }
+
+      const code=typeof body.code==='string'?body.code.trim():'';
+      const separator=code.indexOf('.');
+      if(separator<0){
+        return new Response(null,{status:404});
+      }
+
+      const zoneId=code.slice(0,separator);
+      const secret=code.slice(separator+1);
+      if(!validUuid(zoneId)||!/^[a-f0-9]{48}$/.test(secret)){
+        return new Response(null,{status:404});
+      }
+
+      const deviceId=crypto.randomUUID();
+      const consumed=await zone(env,zoneId).fetch(
+        new Request(
+          'https://zone.internal/join/consume',
+          {
+            method:'POST',
+            headers:{
+              'Content-Type':'application/json'
+            },
+            body:JSON.stringify({
+              secret,
+              deviceId,
+              name:body.name,
+              platform:body.platform,
+              arch:body.arch,
+              version:body.version
+            })
+          }
+        )
+      );
+
+      if(!consumed.ok)return consumed;
+      try{
+        const registered=await createRegistration(env,url.origin,deviceId);
+        return json(
+          {
+            ...registered,
+            zoneId
+          },
+          201
+        );
+      }catch{
+        await zone(env,zoneId).fetch(
+          new Request(
+            `https://zone.internal/devices/${deviceId}`,
+            {
+              method:'POST',
+              headers:{
+                'x-localmcp-internal':'remove'
+              }
+            }
+          )
+        );
+        return json({error:'Registration failed'},500);
+      }
     }
 
     if(request.headers.has('Origin')){
       return json({error:'Origin not allowed'},403);
+    }
+
+    const zoneMcpMatch=/^\/mcp\/z\/([0-9a-f-]{36})\/([a-f0-9]{64})$/.exec(url.pathname);
+
+    if(zoneMcpMatch){
+      if(request.method!=='POST'){
+        return new Response(
+          null,
+          {
+            status:405,
+            headers:{
+              Allow:'POST'
+            }
+          }
+        );
+      }
+
+      if(!request.headers.get('Content-Type')?.toLowerCase().includes('application/json')){
+        return json({error:'JSON required'},415);
+      }
+
+      let body:string;
+      try{
+        body=await bodyText(request,2*1024*1024);
+      }catch{
+        return json({error:'Invalid JSON or body exceeds 2 MiB'},400);
+      }
+
+      return handleZoneMcp(
+        request,
+        env,
+        zoneMcpMatch[1],
+        zoneMcpMatch[2],
+        body
+      );
     }
 
     if(url.pathname==='/register'&&request.method==='POST'){
@@ -174,7 +598,11 @@ export default {
         return new Response(null,{status:404});
       }
 
-      return (await createRegistration(env,url.origin)).response;
+      try{
+        return json(await createRegistration(env,url.origin),201);
+      }catch{
+        return json({error:'Registration failed'},500);
+      }
     }
 
     const rotateMatch=/^\/rotate\/([0-9a-f-]{36})$/.exec(url.pathname);
@@ -210,7 +638,6 @@ export default {
         mcpUrl:`${url.origin}/mcp/${deviceId}/${mcpToken}`
       });
     }
-
     const agentMatch=/^\/agent\/([0-9a-f-]{36})$/.exec(url.pathname);
 
     if(agentMatch){
@@ -406,6 +833,32 @@ export class McpRelay {
   async fetch(request:Request):Promise<Response>{
     const url=new URL(request.url);
 
+    if(
+      url.pathname==='/status'
+      && request.headers.get('x-localmcp-internal')==='1'
+    ){
+      return json({
+        online:this.ctx.getWebSockets('agent').length>0
+      });
+    }
+
+    if(
+      url.pathname==='/revoke'
+      && request.method==='POST'
+      && request.headers.get('x-localmcp-internal')==='1'
+    ){
+      await this.ctx.storage.delete(['agentHash','mcpHash']);
+
+      for(const socket of this.ctx.getWebSockets('agent')){
+        this.failSocket(socket);
+        try{
+          socket.close(1008,'Device revoked');
+        }catch{}
+      }
+
+      return json({ok:true});
+    }
+
     if(url.pathname==='/register'){
       const agentHash=request.headers.get('x-agent-hash');
       const mcpHash=request.headers.get('x-mcp-hash');
@@ -463,6 +916,7 @@ export class McpRelay {
     }
 
     const legacy=request.headers.get('x-localmcp-legacy')==='1';
+    const internal=request.headers.get('x-localmcp-internal')==='1';
 
     if(url.pathname==='/agent'){
       if(!legacy){
@@ -499,7 +953,7 @@ export class McpRelay {
       );
     }
 
-    if(!legacy){
+    if(!legacy&&!internal){
       const expected=await this.ctx.storage.get<string>('mcpHash');
 
       if(
@@ -511,7 +965,6 @@ export class McpRelay {
         return new Response(null,{status:404});
       }
     }
-
     const socket=this.ctx.getWebSockets('agent')[0];
 
     if(!socket){

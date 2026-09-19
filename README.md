@@ -110,6 +110,7 @@ easy-local-mcp unlock
 easy-local-mcp lock
 easy-local-mcp reload
 easy-local-mcp rotate
+easy-local-mcp join <zone-code>
 easy-local-mcp stop
 ```
 
@@ -126,6 +127,12 @@ For regular use, company source code, ERP/MES data, internal files, credentials,
 After deployment, copy the Relay or Worker URL and configure it in Easy Local MCP.
 
 See [Self-hosted Relay](https://github.com/Ryanma-YX/easy-local-mcp/wiki/Self-hosted-Relay) for deployment and registration-protection details.
+
+## Multi-Device Zones
+
+A Relay can group several devices into a Zone. Open `/admin` on a Zone-capable Relay to create a Zone, generate a one-time join code, view device status, rename devices, or revoke them. On a stopped device, stage the join with `localmcp join <zone-code>`, then start Easy Local MCP normally.
+
+A Zone also exposes one shared MCP connector URL. ChatGPT can connect to that URL once, call `list_devices`, and route the normal LocalMCP tools by adding a required `device` argument. Per-device MCP URLs continue to work for compatibility, and the target Agent still enforces its own local LOCK and feature permissions. Existing Zones created by an earlier Zone build can enable the shared connector by choosing **Rotate Connector** in `/admin`. See [Multi-Device Zones](https://github.com/Ryanma-YX/easy-local-mcp/wiki/Multi-Device-Zones).
 
 ## Development
 

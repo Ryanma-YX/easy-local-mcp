@@ -16,9 +16,22 @@ import {validatedWorkerOrigin} from '../src/relay.js';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import WebSocket from 'ws';
+import {adminPage} from '../worker/admin.js';
 
 const nodeCommand=(script:string)=>
   JSON.stringify(process.execPath)+' -e '+JSON.stringify(script);
+
+test('Zone admin page emits syntactically valid browser JavaScript',()=>{
+  const html=adminPage();
+  const start=html.indexOf('<script>');
+  const end=html.indexOf('</script>');
+
+  assert.ok(start>=0&&end>start);
+  const script=html.slice(start+'<script>'.length,end);
+  assert.doesNotThrow(()=>new Function(script));
+  assert.match(script,/Zone ID:.*\\nAdmin token:/s);
+  assert.match(script,/data\.code\+'\\nExpires: '/);
+});
 
 test('Worker origins require HTTPS except explicit loopback development origins',()=>{
   assert.equal(validatedWorkerOrigin('https://worker.example').href,'https://worker.example/');
@@ -198,6 +211,190 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
   ).json();
 
   assert.equal(health.registrationProtected,true);
+  assert.equal(health.zones,true);
+
+  const adminPage=await fetch(origin+'/admin');
+  assert.equal(adminPage.status,200);
+  assert.match(
+    await adminPage.text(),
+    /Easy Local MCP Zones/
+  );
+
+  const zoneCreate=await fetch(
+    origin+'/api/zones',
+    {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        Authorization:`Bearer ${registrationToken}`
+      },
+      body:JSON.stringify({
+        name:'Test Zone'
+      })
+    }
+  );
+
+  assert.equal(zoneCreate.status,201);
+  const createdZone:any=await zoneCreate.json();
+  assert.match(createdZone.zoneId,/^[0-9a-f-]{36}$/);
+  assert.equal(createdZone.adminToken.length,64);
+  assert.equal(createdZone.mcpToken.length,64);
+  assert.equal(
+    createdZone.mcpUrl,
+    `${origin}/mcp/z/${createdZone.zoneId}/${createdZone.mcpToken}`
+  );
+  assert.equal(createdZone.name,'Test Zone');
+
+  const zoneHeaders={
+    'Content-Type':'application/json',
+    Authorization:`Bearer ${createdZone.adminToken}`
+  };
+
+  const joinCodeResponse=await fetch(
+    `${origin}/api/zones/${createdZone.zoneId}/join-codes`,
+    {
+      method:'POST',
+      headers:zoneHeaders,
+      body:JSON.stringify({
+        ttlMinutes:10
+      })
+    }
+  );
+
+  assert.equal(joinCodeResponse.status,201);
+  const joinCode:any=await joinCodeResponse.json();
+  assert.match(
+    joinCode.code,
+    /^[0-9a-f-]{36}\.[a-f0-9]{48}$/
+  );
+
+  const zoneJoinBody={
+    code:joinCode.code,
+    name:'MacMini-M4',
+    platform:'darwin',
+    arch:'arm64',
+    version:'0.3.11'
+  };
+
+  const zoneJoin=await fetch(
+    origin+'/join',
+    {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify(zoneJoinBody)
+    }
+  );
+
+  assert.equal(zoneJoin.status,201);
+  const joinedDevice:any=await zoneJoin.json();
+  assert.equal(joinedDevice.zoneId,createdZone.zoneId);
+  assert.match(joinedDevice.deviceId,/^[0-9a-f-]{36}$/);
+  assert.equal(joinedDevice.mcpToken.length,64);
+
+  assert.equal(
+    (
+      await fetch(
+        origin+'/join',
+        {
+          method:'POST',
+          headers:{
+            'Content-Type':'application/json'
+          },
+          body:JSON.stringify(zoneJoinBody)
+        }
+      )
+    ).status,
+    404,
+    'join codes must be one-time credentials'
+  );
+
+  const zoneInfoResponse=await fetch(
+    `${origin}/api/zones/${createdZone.zoneId}`,
+    {
+      headers:{
+        Authorization:`Bearer ${createdZone.adminToken}`
+      }
+    }
+  );
+
+  assert.equal(zoneInfoResponse.status,200);
+  let zoneInfo:any=await zoneInfoResponse.json();
+  assert.equal(zoneInfo.devices.length,1);
+  assert.equal(zoneInfo.devices[0].name,'MacMini-M4');
+  assert.equal(zoneInfo.devices[0].platform,'darwin');
+  assert.equal(zoneInfo.devices[0].arch,'arm64');
+  assert.equal(zoneInfo.devices[0].online,false);
+
+  const renamed=await fetch(
+    `${origin}/api/zones/${createdZone.zoneId}/devices/${joinedDevice.deviceId}`,
+    {
+      method:'PATCH',
+      headers:zoneHeaders,
+      body:JSON.stringify({
+        name:'Mac Mini PlayCover'
+      })
+    }
+  );
+
+  assert.equal(renamed.status,200);
+
+  zoneInfo=await (
+    await fetch(
+      `${origin}/api/zones/${createdZone.zoneId}`,
+      {
+        headers:{
+          Authorization:`Bearer ${createdZone.adminToken}`
+        }
+      }
+    )
+  ).json();
+
+  assert.equal(zoneInfo.devices[0].name,'Mac Mini PlayCover');
+
+
+  const revoked=await fetch(
+    `${origin}/api/zones/${createdZone.zoneId}/devices/${joinedDevice.deviceId}`,
+    {
+      method:'DELETE',
+      headers:{
+        Authorization:`Bearer ${createdZone.adminToken}`
+      }
+    }
+  );
+
+  assert.equal(revoked.status,200);
+
+  assert.equal(
+    (
+      await fetch(
+        joinedDevice.mcpUrl,
+        {
+          method:'POST',
+          headers:{
+            'Content-Type':'application/json'
+          },
+          body:'{}'
+        }
+      )
+    ).status,
+    404,
+    'revoking a Zone device must invalidate its MCP credential'
+  );
+
+  zoneInfo=await (
+    await fetch(
+      `${origin}/api/zones/${createdZone.zoneId}`,
+      {
+        headers:{
+          Authorization:`Bearer ${createdZone.adminToken}`
+        }
+      }
+    )
+  ).json();
+
+  assert.equal(zoneInfo.devices.length,0);
 
   const legacyUrl=`${origin}/mcp/${mcpToken}`;
 
@@ -304,7 +501,7 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
 
   assert.equal(registration.status,201);
 
-  const registered:any=await registration.json();
+  let registered:any=await registration.json();
 
   assert.match(
     registered.deviceId,
@@ -320,6 +517,39 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     registered.mcpToken.length,
     64
   );
+
+  const routedJoinCodeResponse=await fetch(
+    `${origin}/api/zones/${createdZone.zoneId}/join-codes`,
+    {
+      method:'POST',
+      headers:zoneHeaders,
+      body:JSON.stringify({ttlMinutes:10})
+    }
+  );
+
+  assert.equal(routedJoinCodeResponse.status,201);
+  const routedJoinCode:any=await routedJoinCodeResponse.json();
+
+  const routedJoin=await fetch(
+    origin+'/join',
+    {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify({
+        code:routedJoinCode.code,
+        name:'Zone Worker',
+        platform:process.platform,
+        arch:process.arch,
+        version:'0.3.11'
+      })
+    }
+  );
+
+  assert.equal(routedJoin.status,201);
+  registered=await routedJoin.json();
+  assert.equal(registered.zoneId,createdZone.zoneId);
 
   const originalUrl=registered.mcpUrl;
 
@@ -368,7 +598,8 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
       workerUrl:origin,
       agentToken:registered.agentToken,
       mcpToken:registered.mcpToken,
-      deviceId:registered.deviceId
+      deviceId:registered.deviceId,
+      zoneId:registered.zoneId
     })
   );
 
@@ -528,6 +759,63 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     )
   );
 
+  const zoneClient=new Client({
+    name:'zone-worker-test',
+    version:'1'
+  });
+
+  await zoneClient.connect(
+    new StreamableHTTPClientTransport(
+      new URL(createdZone.mcpUrl)
+    )
+  );
+
+  const zoneTools=await zoneClient.listTools();
+  assert.ok(zoneTools.tools.some(tool=>tool.name==='list_devices'));
+  const zoneWorkspaceTool=zoneTools.tools.find(
+    tool=>tool.name==='list_workspaces'
+  );
+  assert.ok(zoneWorkspaceTool);
+  assert.ok(
+    Array.isArray(zoneWorkspaceTool.inputSchema.required)
+    && zoneWorkspaceTool.inputSchema.required.includes('device')
+  );
+
+  const listedDevices:any=await zoneClient.callTool({
+    name:'list_devices',
+    arguments:{}
+  });
+  const listedDevicePayload=JSON.parse(listedDevices.content[0].text);
+  assert.equal(listedDevicePayload.zone,'Test Zone');
+  assert.equal(listedDevicePayload.devices.length,1);
+  assert.equal(listedDevicePayload.devices[0].name,'Zone Worker');
+  assert.equal(listedDevicePayload.devices[0].online,true);
+
+  const zoneWorkspaces:any=await zoneClient.callTool({
+    name:'list_workspaces',
+    arguments:{
+      device:'Zone Worker'
+    }
+  });
+  assert.equal(
+    JSON.parse(zoneWorkspaces.content[0].text).defaultWorkspace,
+    'test'
+  );
+
+  const zoneLockedWrite:any=await zoneClient.callTool({
+    name:'write_file',
+    arguments:{
+      device:'Zone Worker',
+      path:'zone-locked.txt',
+      content:'blocked'
+    }
+  });
+  assert.equal(
+    zoneLockedWrite.isError,
+    true,
+    'Zone routing must preserve the target Agent local LOCK boundary'
+  );
+
   assert.equal(
     (
       await client.callTool({
@@ -545,6 +833,71 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     await cli('unlock','--minutes','5'),
     /Security: UNLOCKED/
   );
+
+  const zoneUnlockedWrite:any=await zoneClient.callTool({
+    name:'write_file',
+    arguments:{
+      device:'Zone Worker',
+      path:'zone-routed.txt',
+      content:'through zone router'
+    }
+  });
+  assert.equal(zoneUnlockedWrite.isError,undefined);
+  assert.equal(
+    await readFile(join(root,'zone-routed.txt'),'utf8'),
+    'through zone router'
+  );
+
+  await zoneClient.close();
+
+  const connectorRotation=await fetch(
+    `${origin}/api/zones/${createdZone.zoneId}/connector`,
+    {
+      method:'POST',
+      headers:zoneHeaders,
+      body:'{}'
+    }
+  );
+  assert.equal(connectorRotation.status,200);
+  const rotatedConnector:any=await connectorRotation.json();
+  assert.notEqual(rotatedConnector.mcpUrl,createdZone.mcpUrl);
+
+  assert.equal(
+    (
+      await fetch(
+        createdZone.mcpUrl,
+        {
+          method:'POST',
+          headers:{
+            'Content-Type':'application/json'
+          },
+          body:JSON.stringify({
+            jsonrpc:'2.0',
+            id:'old-zone-token',
+            method:'ping'
+          })
+        }
+      )
+    ).status,
+    404,
+    'rotating the Zone connector must invalidate the previous URL'
+  );
+
+  const rotatedZoneClient=new Client({
+    name:'rotated-zone-worker-test',
+    version:'1'
+  });
+  await rotatedZoneClient.connect(
+    new StreamableHTTPClientTransport(
+      new URL(rotatedConnector.mcpUrl)
+    )
+  );
+  assert.ok(
+    (await rotatedZoneClient.listTools()).tools.some(
+      tool=>tool.name==='list_devices'
+    )
+  );
+  await rotatedZoneClient.close();
 
   tools=await client.listTools();
 
