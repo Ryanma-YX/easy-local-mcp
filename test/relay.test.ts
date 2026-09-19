@@ -35,11 +35,17 @@ test('Relay admin pages emit syntactically valid browser JavaScript',()=>{
     adminSetupRequiredPage(),
     /RELAY_ADMIN_TOKEN_HASH/
   );
-  assert.match(
-    adminPage(),
-    /Zone Admin Token:.*\\n.*Zone MCP URL:/s
-  );
+  const dashboard=adminPage();
+  assert.match(dashboard,/id="operationOverlay"/);
+  assert.match(dashboard,/const withOperation=async/);
+  assert.match(dashboard,/navigator\.clipboard/);
+  assert.match(dashboard,/document\.execCommand\('copy'\)/);
+  assert.match(dashboard,/Copy Token/);
+  assert.match(dashboard,/Copy URL/);
+  assert.match(dashboard,/Copy Code/);
+  assert.match(dashboard,/Copy ID/);
 });
+
 test('Worker origins require HTTPS except explicit loopback development origins',()=>{
   assert.equal(validatedWorkerOrigin('https://worker.example').href,'https://worker.example/');
   assert.equal(validatedWorkerOrigin('http://localhost:8787').href,'http://localhost:8787/');
