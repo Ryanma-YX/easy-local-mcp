@@ -1,6 +1,7 @@
 // MCP-only relay framing. Never accepts a destination URL from the edge.
 export const MAX_BYTES = 8 * 1024 * 1024;
 export const CHUNK_SIZE = 24000;
+export const MAX_CONCURRENT_REQUESTS = 8;
 export interface Frame { id: string; index: number; total: number; data: string }
 export function frames(id: string, value: unknown): string[] {
   const data = JSON.stringify(value);

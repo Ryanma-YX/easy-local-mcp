@@ -8,7 +8,12 @@ import { resolve } from 'node:path';
 import { stateDir, logFile, maskMcpUrl, serveControl } from './lifecycle.js';
 import { config } from './config.js';
 import WebSocket from 'ws';
-import { Assembly, frames, parseFrame, MAX_BYTES } from './relay-protocol.js';
+import {
+  Assembly,
+  frames,
+  parseFrame,
+  MAX_BYTES
+} from './relay-protocol.js';
 import { DEFAULT_PUBLIC_WORKER_URL, validatedWorkerOrigin } from './relay.js';
 import {
   clearPendingRegistrationToken,
@@ -470,7 +475,6 @@ if(!localReady||closing){
   stop(1);
 }else{
   let attempt=0;
-  let busy=false;
 
   await writeConnectionFile();
 
@@ -497,8 +501,8 @@ if(!localReady||closing){
 
     socket=ws;
 
-    let assembly:Assembly|undefined;
-    let requestId:string|undefined;
+    const assemblies=new Map<string,Assembly>();
+    const activeRequests=new Set<string>();
     let pong=Date.now();
 
     const heartbeat=setInterval(()=>{
@@ -540,30 +544,25 @@ if(!localReady||closing){
       try{
         const frame=parseFrame(message);
 
+        if(activeRequests.has(frame.id)){
+          throw new Error('Duplicate active request');
+        }
+
+        let assembly=assemblies.get(frame.id);
+
         if(!assembly){
-          if(busy){
-            respond(frame.id,{
-              status:429,
-              body:JSON.stringify({
-                error:'Local execution still in progress; do not retry automatically.'
-              })
-            });
-            return;
+          if(frame.index!==0){
+            throw new Error('Missing initial relay frame');
           }
 
           assembly=new Assembly();
-          requestId=frame.id;
-        }
-
-        if(requestId!==frame.id){
-          throw new Error('Overlapping requests');
+          assemblies.set(frame.id,assembly);
         }
 
         const complete=assembly.push(frame);
         if(!complete)return;
 
-        assembly=undefined;
-        requestId=undefined;
+        assemblies.delete(frame.id);
 
         const data=complete.value as {
           body:string;
@@ -579,7 +578,7 @@ if(!localReady||closing){
         }
 
         JSON.parse(data.body);
-        busy=true;
+        activeRequests.add(frame.id);
 
         try{
           const headers:Record<string,string>={
@@ -641,7 +640,7 @@ if(!localReady||closing){
             })
           });
         }finally{
-          busy=false;
+          activeRequests.delete(frame.id);
         }
       }catch{
         ws.close(1008,'Invalid relay request');

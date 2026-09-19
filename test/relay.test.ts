@@ -696,6 +696,77 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     'echo'
   );
 
+  const slowExternal=client.callTool({
+    name:'call_mcp_tool',
+    arguments:{
+      server:'fixture',
+      tool:'echo',
+      arguments:{
+        text:'slow'
+      }
+    }
+  });
+
+  await new Promise(
+    resolveDelay=>setTimeout(resolveDelay,100)
+  );
+
+  const duringSlow=client.callTool({
+    name:'list_workspaces',
+    arguments:{}
+  });
+
+  assert.equal(
+    await Promise.race([
+      duringSlow.then(()=> 'quick'),
+      slowExternal.then(()=> 'slow')
+    ]),
+    'quick',
+    'a long-running tool must not block an unrelated MCP request'
+  );
+
+  const duringSlowResult:any=await duringSlow;
+  assert.ok(
+    duringSlowResult.content[0].text.includes('reloaded')
+  );
+  assert.equal((await slowExternal).isError,false);
+
+  const exclusiveSlow=client.callTool({
+    name:'call_mcp_tool',
+    arguments:{
+      server:'fixture',
+      tool:'echo',
+      arguments:{
+        text:'slow'
+      }
+    }
+  });
+
+  await new Promise(
+    resolveDelay=>setTimeout(resolveDelay,100)
+  );
+
+  const queuedWrite=client.callTool({
+    name:'write_file',
+    arguments:{
+      path:'serialized.txt',
+      content:'after slow mutation',
+      overwrite:true
+    }
+  });
+
+  assert.equal(
+    await Promise.race([
+      exclusiveSlow.then(()=> 'slow'),
+      queuedWrite.then(()=> 'write')
+    ]),
+    'slow',
+    'mutating MCP requests must remain serialized'
+  );
+
+  assert.equal((await exclusiveSlow).isError,false);
+  assert.equal((await queuedWrite).isError,undefined);
+
   const echoed:any=await client.callTool({
     name:'call_mcp_tool',
     arguments:{

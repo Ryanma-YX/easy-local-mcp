@@ -1,4 +1,9 @@
-import { Assembly, frames, parseFrame } from '../src/relay-protocol';
+import {
+  Assembly,
+  frames,
+  parseFrame,
+  MAX_CONCURRENT_REQUESTS
+} from '../src/relay-protocol';
 
 interface Env {
   RELAY:DurableObjectNamespace;
@@ -505,10 +510,10 @@ export class McpRelay {
       );
     }
 
-    if(this.pending.size){
+    if(this.pending.size>=MAX_CONCURRENT_REQUESTS){
       return json(
         {
-          error:'Local agent busy. Do not automatically retry write operations.'
+          error:`Local agent has reached the ${MAX_CONCURRENT_REQUESTS}-request concurrency limit. Do not automatically retry write operations.`
         },
         429
       );

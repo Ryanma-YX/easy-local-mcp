@@ -100,6 +100,39 @@ function parseUnlockMinutes(args:string[]){
   return minutes;
 }
 
+const concurrentReadTools=new Set([
+  'workspace_info',
+  'list_workspaces',
+  'list_directory',
+  'workspace_tree',
+  'stat_path',
+  'find_files',
+  'search_files',
+  'read_file',
+  'read_file_lines',
+  'list_mcp_servers',
+  'list_skills',
+  'read_skill',
+  'read_process',
+  'list_processes'
+]);
+
+function requestCanRunDuringMutation(body:unknown){
+  if(!body||typeof body!=='object'||Array.isArray(body))return false;
+
+  const request=body as {
+    method?:unknown;
+    params?:{
+      name?:unknown;
+    };
+  };
+
+  if(request.method!=='tools/call')return true;
+
+  return typeof request.params?.name==='string'
+    && concurrentReadTools.has(request.params.name);
+}
+
 async function main(){
   const mode=process.argv[2]||'start';
 
@@ -371,17 +404,20 @@ async function main(){
 
     app.use(express.json({limit:'2mb'}));
 
-    let gate=Promise.resolve();
+    let mutationGate=Promise.resolve();
 
     app.post(['/mcp','/mcp/:token'],async(req,res)=>{
-      const previous=gate;
-      let release!:()=>void;
+      let release=()=>{};
 
-      gate=new Promise<void>(resolveGate=>{
-        release=resolveGate;
-      });
+      if(!requestCanRunDuringMutation(req.body)){
+        const previous=mutationGate;
 
-      await previous;
+        mutationGate=new Promise<void>(resolveGate=>{
+          release=resolveGate;
+        });
+
+        await previous;
+      }
 
       let server:Awaited<ReturnType<typeof createServer>>|undefined;
       let transport:StreamableHTTPServerTransport|undefined;
