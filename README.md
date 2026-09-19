@@ -81,7 +81,7 @@ src-tauri/target/release/bundle/nsis/
 文件名类似：
 
 ```text
-Easy Local MCP_0.3.9_x64-setup.exe
+Easy Local MCP_0.3.10_x64-setup.exe
 ```
 
 安装后直接启动：
@@ -262,14 +262,28 @@ Easy Local MCP Agent
 Local files / shell / tools
 ```
 
-Worker 部署命令：
+### 一键部署到 Cloudflare
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Ryanma-YX/easy-local-mcp)
+
+点击按钮后按 Cloudflare 提示登录、连接 GitHub 并完成 **Deploy**。部署完成后，在 Worker 的 **Settings → Domains & Routes** 中复制你的 `workers.dev` 地址，例如：
+
+```text
+https://easy-local-mcp-relay.YOUR-SUBDOMAIN.workers.dev
+```
+
+然后在 Easy Local MCP 首次启动界面填写这个 Worker URL。
+
+> 对安全要求更高的环境，建议为公开 Relay 配置 `REGISTRATION_TOKEN_HASH`，并在首次设置中填写对应的 raw registration token。Relay 只保存 hash；raw token 不进入 MCP URL，也不会写入审计日志。
+
+也可以使用 Wrangler 手动部署：
 
 ```powershell
 npm ci
 npm run worker:deploy
 ```
 
-然后在首次启动界面填写你的 Worker URL。
+Cloudflare Deploy Button 的工作方式可参考 [Cloudflare 官方说明](https://developers.cloudflare.com/workers/platform/deploy-buttons/)。
 
 如果 Worker 配置了：
 
