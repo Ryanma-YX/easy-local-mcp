@@ -606,7 +606,136 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
 
   assert.equal(zoneInfo.devices.length,0);
 
+  const leaveJoinCodeResponse=await fetch(
+    `${origin}/api/zones/${createdZone.zoneId}/join-codes`,
+    {
+      method:'POST',
+      headers:{
+        Authorization:`Bearer ${createdZone.adminToken}`,
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify({ttlMinutes:10})
+    }
+  );
+  assert.equal(leaveJoinCodeResponse.status,201);
+  const leaveJoinCode:any=await leaveJoinCodeResponse.json();
+
+  const leaveJoinResponse=await fetch(
+    origin+'/join',
+    {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        code:leaveJoinCode.code,
+        name:'Leave Test Device',
+        platform:'darwin',
+        arch:'arm64',
+        version:'0.4.0'
+      })
+    }
+  );
+  assert.equal(leaveJoinResponse.status,201);
+  const leaveJoined:any=await leaveJoinResponse.json();
+
+  assert.equal(
+    (
+      await fetch(
+        `${origin}/leave/${createdZone.zoneId}/${leaveJoined.deviceId}`,
+        {
+          method:'POST',
+          headers:{Authorization:'Bearer wrong-token'}
+        }
+      )
+    ).status,
+    404,
+    'Zone leave must require the current device Agent token'
+  );
+
+  const leaveResponse=await fetch(
+    `${origin}/leave/${createdZone.zoneId}/${leaveJoined.deviceId}`,
+    {
+      method:'POST',
+      headers:{Authorization:`Bearer ${leaveJoined.agentToken}`}
+    }
+  );
+  assert.equal(leaveResponse.status,200);
+  const standalone:any=await leaveResponse.json();
+  assert.equal(standalone.deviceId,leaveJoined.deviceId);
+  assert.equal(standalone.workerUrl,origin);
+  assert.equal(standalone.agentToken.length,64);
+  assert.equal(standalone.mcpToken.length,64);
+  assert.equal(standalone.zoneId,undefined);
+
+  zoneInfo=await (
+    await fetch(
+      `${origin}/api/zones/${createdZone.zoneId}`,
+      {
+        headers:{Authorization:`Bearer ${createdZone.adminToken}`}
+      }
+    )
+  ).json();
+  assert.equal(zoneInfo.devices.length,0,'leaving must remove the device from the Zone');
+
+  assert.equal(
+    (
+      await fetch(
+        leaveJoined.mcpUrl,
+        {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:'{}'
+        }
+      )
+    ).status,
+    404,
+    'leaving must invalidate the old Zone-era direct MCP credential'
+  );
+
+  assert.equal(
+    (
+      await fetch(
+        standalone.mcpUrl,
+        {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:'{}'
+        }
+      )
+    ).status,
+    503,
+    'leaving must issue valid standalone MCP credentials'
+  );
+
+  const unregisterResponse=await fetch(
+    `${origin}/unregister/${standalone.deviceId}`,
+    {
+      method:'POST',
+      headers:{
+        Authorization:`Bearer ${standalone.agentToken}`,
+        'Content-Type':'application/json'
+      },
+      body:'{}'
+    }
+  );
+  assert.equal(unregisterResponse.status,200);
+  assert.equal(
+    (
+      await fetch(
+        standalone.mcpUrl,
+        {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:'{}'
+        }
+      )
+    ).status,
+    404,
+    'unregister must retire standalone device credentials'
+  );
+
   const legacyUrl=`${origin}/mcp/${mcpToken}`;
+
+
 
   assert.equal(
     (

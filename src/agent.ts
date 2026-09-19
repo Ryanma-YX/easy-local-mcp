@@ -284,6 +284,7 @@ const closeControl=await serveControl(
       unlockExpiresAt:unlock.expiresAt,
       workerUrl:origin?.href??null,
       deviceId:settings?.deviceId??null,
+      zoneId:settings?.zoneId??null,
       workerManagedByEnv:process.env.LOCALMCP_WORKER_URL!==undefined
     };
   },

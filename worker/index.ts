@@ -1091,6 +1091,140 @@ export default {
         mcpUrl:`${url.origin}/mcp/${deviceId}/${mcpToken}`
       });
     }
+    const unregisterMatch=/^\/unregister\/([0-9a-f-]{36})$/.exec(url.pathname);
+
+    if(unregisterMatch&&request.method==='POST'){
+      const deviceId=unregisterMatch[1];
+      const currentToken=bearer(request);
+      let body:Record<string,unknown>={};
+
+      try{
+        body=JSON.parse(await bodyText(request,8*1024)) as Record<string,unknown>;
+      }catch{
+        return json({error:'Invalid JSON'},400);
+      }
+
+      const zoneId=typeof body.zoneId==='string'?body.zoneId.trim():'';
+      if(zoneId&&!validUuid(zoneId)){
+        return json({error:'Invalid Zone ID'},400);
+      }
+
+      const authorizedDevice=await relay(env,deviceId).fetch(
+        new Request(
+          'https://relay.internal/authorize-agent',
+          {
+            method:'POST',
+            headers:{
+              'x-localmcp-internal':'1',
+              'x-current-agent-token':currentToken
+            }
+          }
+        )
+      );
+
+      if(!authorizedDevice.ok){
+        return new Response(null,{status:authorizedDevice.status});
+      }
+
+      if(zoneId){
+        const removed=await zone(env,zoneId).fetch(
+          new Request(
+            `https://zone.internal/devices/${deviceId}`,
+            {
+              method:'POST',
+              headers:{
+                'x-localmcp-internal':'remove'
+              }
+            }
+          )
+        );
+        if(!removed.ok){
+          return json({error:'Unable to leave Zone'},500);
+        }
+      }
+
+      const revoked=await relay(env,deviceId).fetch(
+        new Request(
+          'https://relay.internal/revoke',
+          {
+            method:'POST',
+            headers:{
+              'x-localmcp-internal':'1'
+            }
+          }
+        )
+      );
+
+      if(!revoked.ok){
+        return json({error:'Unable to revoke device credentials'},500);
+      }
+
+      return json({ok:true});
+    }
+
+    const leaveMatch=/^\/leave\/([0-9a-f-]{36})\/([0-9a-f-]{36})$/.exec(url.pathname);
+
+    if(leaveMatch&&request.method==='POST'){
+      const zoneId=leaveMatch[1];
+      const deviceId=leaveMatch[2];
+      const currentToken=bearer(request);
+
+      const authorizedDevice=await relay(env,deviceId).fetch(
+        new Request(
+          'https://relay.internal/authorize-agent',
+          {
+            method:'POST',
+            headers:{
+              'x-localmcp-internal':'1',
+              'x-current-agent-token':currentToken
+            }
+          }
+        )
+      );
+
+      if(!authorizedDevice.ok){
+        return new Response(null,{status:authorizedDevice.status});
+      }
+
+      const removed=await zone(env,zoneId).fetch(
+        new Request(
+          `https://zone.internal/devices/${deviceId}`,
+          {
+            method:'POST',
+            headers:{
+              'x-localmcp-internal':'remove'
+            }
+          }
+        )
+      );
+
+      if(!removed.ok){
+        return json({error:'Unable to leave Zone'},500);
+      }
+
+      const revoked=await relay(env,deviceId).fetch(
+        new Request(
+          'https://relay.internal/revoke',
+          {
+            method:'POST',
+            headers:{
+              'x-localmcp-internal':'1'
+            }
+          }
+        )
+      );
+
+      if(!revoked.ok){
+        return json({error:'Unable to revoke device credentials'},500);
+      }
+
+      try{
+        return json(await createRegistration(env,url.origin,deviceId),200);
+      }catch{
+        return json({error:'Unable to create standalone device credentials'},500);
+      }
+    }
+
     const agentMatch=/^\/agent\/([0-9a-f-]{36})$/.exec(url.pathname);
 
     if(agentMatch){
@@ -1293,6 +1427,19 @@ export class McpRelay {
       return json({
         online:this.ctx.getWebSockets('agent').length>0
       });
+    }
+
+    if(
+      url.pathname==='/authorize-agent'
+      && request.method==='POST'
+      && request.headers.get('x-localmcp-internal')==='1'
+    ){
+      const expected=await this.ctx.storage.get<string>('agentHash');
+      const current=request.headers.get('x-current-agent-token')||'';
+      if(!await authorized(current,expected)){
+        return new Response(null,{status:404});
+      }
+      return json({ok:true});
     }
 
     if(

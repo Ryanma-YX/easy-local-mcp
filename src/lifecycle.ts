@@ -26,6 +26,7 @@ export interface Status {
   unlockExpiresAt:string|null;
   workerUrl:string|null;
   deviceId:string|null;
+  zoneId:string|null;
   workerManagedByEnv:boolean;
 }
 
@@ -153,6 +154,7 @@ export async function status():Promise<Status>{
       unlockExpiresAt:null,
       workerUrl:null,
       deviceId:null,
+      zoneId:null,
       workerManagedByEnv:process.env.LOCALMCP_WORKER_URL!==undefined
     };
   }

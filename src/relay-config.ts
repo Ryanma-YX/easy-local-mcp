@@ -9,6 +9,13 @@ export const relayConfigFile=resolve(relayStateDir,'relay.json');
 export const registeredWorkerFile=resolve(relayStateDir,'worker.json');
 export const pendingRegistrationTokenFile=resolve(relayStateDir,'registration-token.pending');
 export const pendingZoneJoinCodeFile=resolve(relayStateDir,'zone-join-code.pending');
+export interface RegisteredDeviceRecord {
+  workerUrl:string;
+  agentToken:string;
+  mcpToken:string;
+  deviceId?:string;
+  zoneId?:string;
+}
 
 export interface RelaySetupState {
   configured:boolean;
@@ -39,6 +46,37 @@ function workerUrlFrom(value:unknown,path:string){
   }
 
   return validatedWorkerOrigin(workerUrl).href;
+}
+
+export async function registeredDeviceRecord():Promise<RegisteredDeviceRecord|null>{
+  const value=await readJson(registeredWorkerFile);
+  if(value===undefined)return null;
+  if(!value||typeof value!=='object'||Array.isArray(value)){
+    throw new Error(`Invalid Relay registration in ${registeredWorkerFile}`);
+  }
+
+  const source=value as Record<string,unknown>;
+  const workerUrl=workerUrlFrom(source,registeredWorkerFile);
+  const agentToken=typeof source.agentToken==='string'?source.agentToken:'';
+  const mcpToken=typeof source.mcpToken==='string'?source.mcpToken:'';
+  const deviceId=typeof source.deviceId==='string'?source.deviceId:undefined;
+  const zoneId=typeof source.zoneId==='string'?source.zoneId:undefined;
+
+  if(!agentToken||!mcpToken){
+    throw new Error(`Invalid Relay credentials in ${registeredWorkerFile}`);
+  }
+
+  return {workerUrl,agentToken,mcpToken,deviceId,zoneId};
+}
+
+export async function saveRegisteredDevice(record:RegisteredDeviceRecord){
+  await secureWriteFileAtomic(
+    registeredWorkerFile,
+    JSON.stringify(record,null,2)+'\n'
+  );
+}
+export async function clearRegisteredDevice(){
+  await rm(registeredWorkerFile,{force:true});
 }
 
 export async function relaySetupState():Promise<RelaySetupState>{

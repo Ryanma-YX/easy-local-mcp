@@ -500,8 +500,11 @@ test('fresh Control Center requires explicit Relay setup before Agent start',{ti
   const origin=new URL(uiUrl).origin;
   const page=await fetch(uiUrl);
   const html=await page.text();
-  assert.match(html,/Choose a Relay before starting Easy Local MCP/);
   assert.match(html,/Save & Start Agent/);
+  assert.match(html,/class="summary" hidden/);
+  assert.match(html,/class="grid" hidden/);
+  assert.match(html,/Zone Join Code \(optional\)/);
+  assert.match(html,/Zone membership/);
   const inlineScript=/<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
   assert.ok(inlineScript);
   assert.doesNotThrow(()=>new Function(inlineScript));
@@ -552,7 +555,8 @@ test('fresh Control Center requires explicit Relay setup before Agent start',{ti
   assert.equal(configured.response.status,200);
   assert.equal(configured.value.agent.status,'stopped');
   assert.equal(configured.value.connection.configured,true);
-  assert.equal(configured.value.connection.needsSetup,false);
+  assert.equal(configured.value.connection.onboardingComplete,false);
+  assert.equal(configured.value.connection.needsSetup,true);
   assert.equal(configured.value.connection.workerUrl,'https://relay.example.test/');
 
   const relayFile=JSON.parse(await readFile(join(stateDir,'relay.json'),'utf8'));
