@@ -178,6 +178,61 @@ export function printUrl(value:Status){
   console.log(value.url);
 }
 
+export function desktopAgentLauncher(
+  env:NodeJS.ProcessEnv=process.env,
+  platform:NodeJS.Platform=process.platform
+){
+  if(platform!=='win32')return null;
+  return env.LOCALMCP_DESKTOP_LAUNCHER?.trim()||null;
+}
+
+async function spawnBackgroundAgent(logFd:number){
+  const launcher=desktopAgentLauncher();
+
+  if(launcher){
+    const starter=spawn(
+      launcher,
+      ['--background-agent'],
+      {
+        env:process.env,
+        stdio:'ignore',
+        windowsHide:true
+      }
+    );
+
+    await new Promise<void>((ready,reject)=>{
+      starter.once('error',reject);
+      starter.once('exit',(code,signal)=>{
+        if(code===0)ready();
+        else reject(new Error(
+          `Easy Local MCP desktop launcher failed with ${signal??`exit code ${code??'unknown'}`}`
+        ));
+      });
+    });
+
+    return undefined;
+  }
+
+  const child=spawn(
+    process.execPath,
+    [fileURLToPath(new URL('./agent.js',import.meta.url))],
+    {
+      detached:true,
+      stdio:['ignore',logFd,logFd],
+      env:process.env,
+      windowsHide:process.platform==='win32'
+    }
+  );
+
+  await new Promise<void>((ready,reject)=>{
+    child.once('spawn',ready);
+    child.once('error',reject);
+  });
+
+  child.unref();
+  return child;
+}
+
 async function locked<T>(action:()=>Promise<T>):Promise<T>{
   await mkdir(stateDir,{recursive:true,mode:0o700});
   const deadline=Date.now()+90000;
@@ -272,23 +327,7 @@ export async function control(
         const log=await open(logFile,'a',0o600);
 
         try{
-          child=spawn(
-            process.execPath,
-            [fileURLToPath(new URL('./agent.js',import.meta.url))],
-            {
-              detached:true,
-              stdio:['ignore',log.fd,log.fd],
-              env:process.env,
-              windowsHide:process.platform==='win32'
-            }
-          );
-
-          await new Promise<void>((ready,reject)=>{
-            child!.once('spawn',ready);
-            child!.once('error',reject);
-          });
-
-          child.unref();
+          child=await spawnBackgroundAgent(log.fd);
         }finally{
           await log.close();
         }
@@ -302,7 +341,11 @@ export async function control(
         }
 
         if(Date.now()>deadline){
-          child?.kill('SIGTERM');
+          if(child){
+            child.kill('SIGTERM');
+          }else if(current.pid){
+            try{process.kill(current.pid,'SIGTERM');}catch{}
+          }
           throw new Error(`Easy Local MCP startup timed out; see ${logFile}`);
         }
 

@@ -184,9 +184,13 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
   assert.match(html,/auditPageSize/);
   assert.match(html,/auditPrev/);
   assert.match(html,/auditNext/);
+  assert.match(html,/id="operationOverlay"/);
+  assert.match(html,/operation-spinner/);
   const inlineScript=/<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
   assert.ok(inlineScript);
   assert.doesNotThrow(()=>new Function(inlineScript));
+  assert.match(inlineScript,/withOperation/);
+  assert.match(inlineScript,/operationActive/);
   assert.match(inlineScript,/response\.status===401/);
   assert.match(inlineScript,/post\('\/api\/session'/);
   assert.ok(!html.includes(controlSecret));

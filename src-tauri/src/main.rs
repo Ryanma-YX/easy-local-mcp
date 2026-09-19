@@ -92,6 +92,7 @@ fn start_bundled_host(app: &tauri::AppHandle) -> Result<(Url, Child), String> {
     }
 
     let home = app.path().home_dir().map_err(|error| error.to_string())?;
+    let desktop_launcher = portable_path(env::current_exe().map_err(|error| error.to_string())?);
     let log_dir = app.path().app_log_dir().map_err(|error| error.to_string())?;
     create_dir_all(&log_dir).map_err(|error| error.to_string())?;
     let mut log = OpenOptions::new()
@@ -116,6 +117,7 @@ fn start_bundled_host(app: &tauri::AppHandle) -> Result<(Url, Child), String> {
         .arg("desktop-host")
         .current_dir(home)
         .env("LOCALMCP_DESKTOP_BUNDLED", "1")
+        .env("LOCALMCP_DESKTOP_LAUNCHER", &desktop_launcher)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::from(log));
@@ -201,7 +203,70 @@ fn hide_main(app: &tauri::AppHandle) {
     }
 }
 
+#[cfg(windows)]
+fn run_background_agent_launcher() -> Result<(), String> {
+    let exe = portable_path(env::current_exe().map_err(|error| error.to_string())?);
+    let resource_dir = exe
+        .parent()
+        .ok_or_else(|| "Unable to resolve Easy Local MCP install directory".to_string())?
+        .to_path_buf();
+    let node = resource_dir.join("runtime").join("node.exe");
+    let script = resource_dir.join("app").join("dist").join("agent.js");
+
+    if !node.is_file() {
+        return Err(format!("Bundled Node runtime not found: {}", node.display()));
+    }
+    if !script.is_file() {
+        return Err(format!("Bundled Easy Local MCP agent not found: {}", script.display()));
+    }
+
+    let home = env::var_os("USERPROFILE")
+        .or_else(|| env::var_os("HOME"))
+        .map(PathBuf::from)
+        .ok_or_else(|| "Unable to resolve user home directory".to_string())?;
+    let state_dir = home.join(".localmcp");
+    create_dir_all(&state_dir).map_err(|error| error.to_string())?;
+
+    let log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(state_dir.join("agent.log"))
+        .map_err(|error| error.to_string())?;
+    let stdout = log.try_clone().map_err(|error| error.to_string())?;
+
+    let mut command = Command::new(&node);
+    command
+        .arg(&script)
+        .current_dir(&home)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(log));
+
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    command
+        .spawn()
+        .map_err(|error| format!("Unable to start bundled Easy Local MCP agent: {error}"))?;
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn run_background_agent_launcher() -> Result<(), String> {
+    Err("Background agent launcher is only available on Windows".to_string())
+}
+
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--background-agent") {
+        if let Err(error) = run_background_agent_launcher() {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     tauri::Builder::default()
         .manage(HostProcess(Mutex::new(None)))
         .setup(|app| {

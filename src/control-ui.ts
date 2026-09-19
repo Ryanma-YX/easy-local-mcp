@@ -560,7 +560,8 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
 input[type="text"],input[type="password"],select{width:100%;border:1px solid #cfd6e2;border-radius:8px;padding:8px 9px;background:#fff;color:#182230}input[type="checkbox"],input[type="radio"]{width:17px;height:17px}
 .cap-name{font-weight:700}.cap-note{display:block;font-size:11px;color:#7b8697;margin-top:2px}.workspace-actions{display:flex;gap:6px;align-items:center}.connection-editor{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:12px}
 .audit-tools{display:grid;grid-template-columns:180px 1fr auto auto;gap:8px;align-items:center;margin-bottom:10px}.pager{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap}.pager-controls{display:flex;gap:8px;align-items:center}
-#revealed{margin-top:9px;font:12px ui-monospace,SFMono-Regular,Consolas,monospace}#message{position:fixed;right:20px;bottom:20px;max-width:460px;padding:11px 14px;background:#172b4d;color:#fff;border-radius:10px;display:none;white-space:pre-wrap;z-index:10}
+#revealed{margin-top:9px;font:12px ui-monospace,SFMono-Regular,Consolas,monospace}#message{position:fixed;right:20px;bottom:20px;max-width:460px;padding:11px 14px;background:#172b4d;color:#fff;border-radius:10px;display:none;white-space:pre-wrap;z-index:30;box-shadow:0 10px 30px rgba(16,24,40,.22)}
+#operationOverlay{position:fixed;inset:0;z-index:20;background:rgba(15,23,42,.28);backdrop-filter:blur(1.5px);display:flex;align-items:center;justify-content:center}#operationOverlay[hidden]{display:none}.operation-panel{min-width:230px;max-width:80vw;padding:18px 22px;background:#fff;border:1px solid #d8dee8;border-radius:14px;box-shadow:0 18px 50px rgba(15,23,42,.22);display:flex;align-items:center;gap:13px;font-weight:700;color:#27364b}.operation-spinner{width:22px;height:22px;border:3px solid #dbe2ea;border-top-color:#172b4d;border-radius:50%;animation:operation-spin .8s linear infinite;flex:0 0 auto}@keyframes operation-spin{to{transform:rotate(360deg)}}
 @media(max-width:900px){.summary{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.wide{grid-column:auto}}
 @media(max-width:600px){.shell{padding:18px 10px 40px}.summary{grid-template-columns:1fr 1fr}header{display:block}.audit-tools{grid-template-columns:1fr}.connection-editor{grid-template-columns:1fr}.card{padding:14px}}
 </style>
@@ -658,7 +659,8 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
 </section>
 </div>
 </div>
-<div id="message"></div>
+<div id="message" role="status" aria-live="polite"></div>
+<div id="operationOverlay" hidden aria-live="polite" aria-busy="true"><div class="operation-panel"><span class="operation-spinner" aria-hidden="true"></span><span id="operationText">Processing…</span></div></div>
 <script>
 (() => {
   let currentFeatures=null;
@@ -678,6 +680,24 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     node.style.display='block';
     clearTimeout(message.timer);
     message.timer=setTimeout(()=>node.style.display='none',4500);
+  };
+  let operationActive=false;
+  const withOperation=async(label,task)=>{
+    if(operationActive)return;
+    operationActive=true;
+    $('operationText').textContent=label||'Processing…';
+    $('operationOverlay').hidden=false;
+    document.body.setAttribute('aria-busy','true');
+    try{
+      return await task();
+    }catch(error){
+      message(error?.message||String(error),true);
+      return undefined;
+    }finally{
+      $('operationOverlay').hidden=true;
+      document.body.removeAttribute('aria-busy');
+      operationActive=false;
+    }
   };
   const post=async(path,body={})=>{
     const response=await fetch(path,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -829,8 +849,12 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
   const boot=async()=>{await api('/api/session');await load();await loadAudit();};
   const agentAction=async(action)=>{
     if((action==='stop'||action==='restart')&&!confirm((action==='stop'?'Stop':'Restart')+' the Easy Local MCP Agent? Active MCP connections will be interrupted.'))return;
-    try{await api('/api/agent/'+action,{confirm:action==='start'||action==='stop'||action==='restart'});await load();message('Agent '+action+' completed.');}
-    catch(error){message(error.message,true);}
+    const labels={start:'Starting Agent…',stop:'Stopping Agent…',restart:'Restarting Agent…'};
+    await withOperation(labels[action]||'Updating Agent…',async()=>{
+      await api('/api/agent/'+action,{confirm:action==='start'||action==='stop'||action==='restart'});
+      await load();
+      message('Agent '+action+' completed.');
+    });
   };
   $('setupUseDefault').addEventListener('click',()=>{$('setupWorkerInput').value=DEFAULT_WORKER;});
   $('setupStart').addEventListener('click',async()=>{
@@ -838,32 +862,66 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     const workerUrl=$('setupWorkerInput').value.trim();
     const registrationToken=registrationTokenManagedByEnv?undefined:$('setupTokenInput').value;
     if(!confirm('Save this Relay and start the Easy Local MCP Agent?\n\n'+workerUrl))return;
-    try{
-      await api('/api/relay/configure',{workerUrl,registrationToken,start:true,confirm:true});
-      $('setupTokenInput').value='';
-      await load();
-      await loadAudit();
-      message('Relay saved and Agent started.');
-    }catch(error){
-      await load().catch(()=>{});
-      message(error.message,true);
-    }
+    await withOperation('Saving Relay and starting Agent…',async()=>{
+      try{
+        await api('/api/relay/configure',{workerUrl,registrationToken,start:true,confirm:true});
+        $('setupTokenInput').value='';
+        await load();
+        await loadAudit();
+        message('Relay saved and Agent started.');
+      }catch(error){
+        await load().catch(()=>{});
+        throw error;
+      }
+    });
   });
   $('agentStart').addEventListener('click',()=>agentAction('start'));
   $('agentStop').addEventListener('click',()=>agentAction('stop'));
   $('agentRestart').addEventListener('click',()=>agentAction('restart'));
   document.querySelectorAll('button[data-minutes]').forEach(button=>button.addEventListener('click',async()=>{
-    try{await api('/api/unlock',{minutes:Number(button.dataset.minutes)});await load();message('Easy Local MCP unlocked.');}catch(error){message(error.message,true);}
+    const minutes=Number(button.dataset.minutes);
+    await withOperation('Unlocking Easy Local MCP…',async()=>{
+      await api('/api/unlock',{minutes});
+      await load();
+      message('Easy Local MCP unlocked for '+minutes+' minutes.');
+    });
   }));
-  $('lock').addEventListener('click',async()=>{try{await api('/api/lock');await load();message('Easy Local MCP locked.');}catch(error){message(error.message,true);}});
-  $('reload').addEventListener('click',async()=>{try{await api('/api/reload');await load();message('Configuration reloaded.');}catch(error){message(error.message,true);}});
+  $('lock').addEventListener('click',async()=>{
+    await withOperation('Locking Easy Local MCP…',async()=>{
+      await api('/api/lock');
+      await load();
+      message('Easy Local MCP locked.');
+    });
+  });
+  $('reload').addEventListener('click',async()=>{
+    await withOperation('Reloading configuration…',async()=>{
+      await api('/api/reload');
+      await load();
+      message('Configuration reloaded.');
+    });
+  });
   $('rotate').addEventListener('click',async()=>{
     if(!confirm('Rotate Easy Local MCP credentials? Existing connections may be interrupted.'))return;
-    try{await api('/api/rotate',{confirm:true});await load();message('Credentials rotated.');}catch(error){message(error.message,true);}
+    await withOperation('Rotating credentials…',async()=>{
+      await api('/api/rotate',{confirm:true});
+      await load();
+      message('Credentials rotated.');
+    });
   });
   $('reveal').addEventListener('click',async()=>{
     if(!confirm('The full MCP URL is a credential. Reveal and copy it locally?'))return;
-    try{const data=await api('/api/reveal-url',{confirm:true});const input=$('revealed');input.hidden=false;input.value=data.url;try{await navigator.clipboard.writeText(data.url);message('MCP URL revealed and copied.');}catch{message('MCP URL revealed. Clipboard access was unavailable.');}}catch(error){message(error.message,true);}
+    await withOperation('Revealing MCP URL…',async()=>{
+      const data=await api('/api/reveal-url',{confirm:true});
+      const input=$('revealed');
+      input.hidden=false;
+      input.value=data.url;
+      try{
+        await navigator.clipboard.writeText(data.url);
+        message('MCP URL revealed and copied.');
+      }catch{
+        message('MCP URL revealed. Clipboard access was unavailable.');
+      }
+    });
   });
   $('useDefaultWorker').addEventListener('click',()=>{$('workerInput').value=DEFAULT_WORKER;});
   $('reregisterWorker').addEventListener('click',async()=>{
@@ -873,31 +931,57 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     const running=$('agentStatus').textContent.startsWith('running');
     if(running){
       if(!confirm('Re-register this Easy Local MCP device with '+workerUrl+'? Local credentials will switch to the new Worker. The previous Worker registration may remain valid until it is revoked or rotated there.'))return;
-      try{await api('/api/worker/reregister',{workerUrl,registrationToken,confirm:true});$('workerTokenInput').value='';await load();message('Worker re-registration completed.');}catch(error){message(error.message,true);}
+      await withOperation('Re-registering Worker…',async()=>{
+        await api('/api/worker/reregister',{workerUrl,registrationToken,confirm:true});
+        $('workerTokenInput').value='';
+        await load();
+        message('Worker re-registration completed.');
+      });
     }else{
       if(!confirm('Save this Relay for the next Agent start?\n\n'+workerUrl))return;
-      try{await api('/api/relay/configure',{workerUrl,registrationToken,start:false,confirm:true});$('workerTokenInput').value='';await load();message('Relay saved.');}catch(error){message(error.message,true);}
+      await withOperation('Saving Relay…',async()=>{
+        await api('/api/relay/configure',{workerUrl,registrationToken,start:false,confirm:true});
+        $('workerTokenInput').value='';
+        await load();
+        message('Relay saved.');
+      });
     }
   });
   document.querySelector('input[data-key="processes"]').addEventListener('change',event=>{if(event.target.checked)document.querySelector('input[data-key="shell"]').checked=true;});
   document.querySelector('input[data-key="shell"]').addEventListener('change',event=>{if(!event.target.checked)document.querySelector('input[data-key="processes"]').checked=false;});
   $('saveConfig').addEventListener('click',async()=>{
-    try{
-      const features={};document.querySelectorAll('#capabilityRows input[data-key]').forEach(input=>{features[input.dataset.key]=input.checked;});
-      const dangerous=['fileWrite','fileDelete','shell','processes','externalMcp'];
-      const enabling=dangerous.filter(key=>!currentFeatures?.[key]&&features[key]);
-      let confirmDangerous=false;
-      if(enabling.length){confirmDangerous=confirm('Enable privileged capabilities: '+enabling.join(', ')+'?\n\nThese capabilities grant additional authority while Easy Local MCP is unlocked.');if(!confirmDangerous)return;}
-      await api('/api/config/update',{features,confirmDangerous});await load();message('Permission profile saved.');
-    }catch(error){message(error.message,true);}
+    const features={};document.querySelectorAll('#capabilityRows input[data-key]').forEach(input=>{features[input.dataset.key]=input.checked;});
+    const dangerous=['fileWrite','fileDelete','shell','processes','externalMcp'];
+    const enabling=dangerous.filter(key=>!currentFeatures?.[key]&&features[key]);
+    let confirmDangerous=false;
+    if(enabling.length){confirmDangerous=confirm('Enable privileged capabilities: '+enabling.join(', ')+'?\n\nThese capabilities grant additional authority while Easy Local MCP is unlocked.');if(!confirmDangerous)return;}
+    await withOperation('Saving permission profile…',async()=>{
+      await api('/api/config/update',{features,confirmDangerous});
+      await load();
+      message('Permission profile saved.');
+    });
   });
   $('addWorkspace').addEventListener('click',()=>{let i=1;let name='workspace'+i;const names=new Set(currentWorkspaces.map(item=>item.name));while(names.has(name))name='workspace'+(++i);currentWorkspaces.push({name,root:''});renderWorkspaces();});
   $('saveWorkspaces').addEventListener('click',async()=>{
     if(!confirm('Save workspace changes? This changes the Easy Local MCP file-access boundary.'))return;
-    try{await api('/api/workspaces/update',{workspaces:currentWorkspaces,defaultWorkspace:currentDefaultWorkspace,confirm:true});await load();message('Workspaces saved.');}catch(error){message(error.message,true);}
+    await withOperation('Saving workspaces…',async()=>{
+      await api('/api/workspaces/update',{workspaces:currentWorkspaces,defaultWorkspace:currentDefaultWorkspace,confirm:true});
+      await load();
+      message('Workspaces saved.');
+    });
   });
-  $('refreshStatus').addEventListener('click',()=>load().catch(error=>message(error.message,true)));
-  $('refreshAudit').addEventListener('click',()=>loadAudit().catch(error=>message(error.message,true)));
+  $('refreshStatus').addEventListener('click',async()=>{
+    await withOperation('Refreshing status…',async()=>{
+      await load();
+      message('Status refreshed.');
+    });
+  });
+  $('refreshAudit').addEventListener('click',async()=>{
+    await withOperation('Refreshing audit history…',async()=>{
+      await loadAudit();
+      message('Audit history refreshed.');
+    });
+  });
   $('auditCategory').addEventListener('change',()=>{auditPage=1;renderAudit();});
   $('auditSearch').addEventListener('input',()=>{auditPage=1;renderAudit();});
   $('auditPageSize').addEventListener('change',()=>{auditPage=1;renderAudit();});

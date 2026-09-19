@@ -7,6 +7,7 @@ import {fork,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {createConnection} from 'node:net';
 import {controlEndpoint} from '../src/control-endpoint.js';
+import {desktopAgentLauncher} from '../src/lifecycle.js';
 
 const exec=promisify(execFile);
 
@@ -175,4 +176,22 @@ test('authenticated native IPC supports masked status, url reveal, unlock, lock,
     assert.match(await cli('stop'),/Status: stopped/);
     assert.match(await cli('stop'),/Status: stopped/);
   }
+});
+
+test('desktop Agent launcher is only selected for Windows bundled desktop',()=>{
+  assert.equal(
+    desktopAgentLauncher(
+      {LOCALMCP_DESKTOP_LAUNCHER:' C:\\Easy Local MCP\\easy-local-mcp-tray.exe '} as NodeJS.ProcessEnv,
+      'win32'
+    ),
+    'C:\\Easy Local MCP\\easy-local-mcp-tray.exe'
+  );
+  assert.equal(
+    desktopAgentLauncher(
+      {LOCALMCP_DESKTOP_LAUNCHER:'C:\\Easy Local MCP\\easy-local-mcp-tray.exe'} as NodeJS.ProcessEnv,
+      'linux'
+    ),
+    null
+  );
+  assert.equal(desktopAgentLauncher({} as NodeJS.ProcessEnv,'win32'),null);
 });
