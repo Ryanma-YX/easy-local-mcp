@@ -858,10 +858,17 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
   };
   $('setupUseDefault').addEventListener('click',()=>{$('setupWorkerInput').value=DEFAULT_WORKER;});
   $('setupStart').addEventListener('click',async()=>{
-    if(workerManagedByEnv)return;
+    if(workerManagedByEnv){
+      message('Relay origin is controlled by LOCALMCP_WORKER_URL. Remove that environment override before changing it here.',true);
+      return;
+    }
     const workerUrl=$('setupWorkerInput').value.trim();
     const registrationToken=registrationTokenManagedByEnv?undefined:$('setupTokenInput').value;
-    if(!confirm('Save this Relay and start the Easy Local MCP Agent?\n\n'+workerUrl))return;
+    if(!workerUrl){
+      message('Enter a Relay URL before starting the Agent.',true);
+      $('setupWorkerInput').focus();
+      return;
+    }
     await withOperation('Saving Relay and starting Agent…',async()=>{
       try{
         await api('/api/relay/configure',{workerUrl,registrationToken,start:true,confirm:true});
@@ -875,7 +882,6 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
       }
     });
   });
-  $('agentStart').addEventListener('click',()=>agentAction('start'));
   $('agentStop').addEventListener('click',()=>agentAction('stop'));
   $('agentRestart').addEventListener('click',()=>agentAction('restart'));
   document.querySelectorAll('button[data-minutes]').forEach(button=>button.addEventListener('click',async()=>{

@@ -505,7 +505,10 @@ test('fresh Control Center requires explicit Relay setup before Agent start',{ti
   const inlineScript=/<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
   assert.ok(inlineScript);
   assert.doesNotThrow(()=>new Function(inlineScript));
-
+  assert.doesNotMatch(inlineScript,/Save this Relay and start the Easy Local MCP Agent/);
+  assert.match(inlineScript,/Saving Relay and starting Agent/);
+  assert.match(inlineScript,/Enter a Relay URL before starting the Agent/);
+  assert.match(inlineScript,/LOCALMCP_WORKER_URL\. Remove that environment override/);
   const sessionResponse=await fetch(new URL('/api/session',uiUrl),{
     method:'POST',
     headers:{Origin:origin,'Content-Type':'application/json'},
