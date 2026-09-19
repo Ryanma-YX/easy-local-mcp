@@ -1,0 +1,58 @@
+name: Sync Wiki
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "docs/wiki/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-wiki
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    name: Publish docs/wiki to GitHub Wiki
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Sync Wiki
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WIKI_URL="https://x-access-token:${GH_TOKEN}@github.com/${REPOSITORY}.wiki.git"
+
+          if ! git ls-remote "${WIKI_URL}" >/dev/null 2>&1; then
+            echo "::error::GitHub Wiki has not been initialized yet. Open the repository Wiki tab and create the first Home page once, then rerun this workflow."
+            exit 1
+          fi
+
+          git clone "${WIKI_URL}" wiki
+
+          find wiki -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a docs/wiki/. wiki/
+
+          cd wiki
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Wiki is already up to date."
+            exit 0
+          fi
+
+          git commit -m "docs: sync wiki from master"
+          git push origin HEAD
