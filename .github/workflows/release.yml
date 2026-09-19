@@ -1,0 +1,300 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag (for example: 0.3.12)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Validate tag and project versions
+        id: meta
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$RELEASE_TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid release tag '$RELEASE_TAG'. Expected a semantic version such as 0.3.12 or v0.3.12."
+            exit 1
+          fi
+
+          TAG_COMMIT="$(git rev-parse "$RELEASE_TAG^{commit}")"
+          HEAD_COMMIT="$(git rev-parse HEAD)"
+          if [[ "$TAG_COMMIT" != "$HEAD_COMMIT" ]]; then
+            echo "::error::Checked out commit $HEAD_COMMIT does not match tag '$RELEASE_TAG' ($TAG_COMMIT)."
+            exit 1
+          fi
+
+          VERSION="${RELEASE_TAG#v}"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          TAURI_VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          CARGO_VERSION="$(awk -F '"' '/^version = / { print $2; exit }' src-tauri/Cargo.toml)"
+
+          if [[ "$VERSION" != "$PACKAGE_VERSION" || "$VERSION" != "$TAURI_VERSION" || "$VERSION" != "$CARGO_VERSION" ]]; then
+            echo "::error::Tag version '$VERSION' does not match project versions: package.json=$PACKAGE_VERSION, tauri.conf.json=$TAURI_VERSION, Cargo.toml=$CARGO_VERSION."
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Validated release $RELEASE_TAG at $TAG_COMMIT"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run check
+
+      - name: Test
+        run: npm test
+
+  build-windows:
+    name: Windows x64
+    needs: validate
+    runs-on: windows-latest
+    env:
+      RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Select stable Rust
+        shell: pwsh
+        run: |
+          rustup update stable
+          rustup default stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare desktop bundle
+        run: npm run desktop:prepare
+
+      - name: Build NSIS installer
+        run: node scripts/run-tauri.mjs build --bundles nsis --no-sign --ci
+
+      - name: Collect release asset
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          $source = Get-ChildItem "src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1
+          if (-not $source) { throw "NSIS installer was not produced." }
+          Copy-Item $source.FullName "release-assets/Easy.Local.MCP_${env:RELEASE_VERSION}_windows-x64-setup.exe"
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-windows-x64
+          path: release-assets/*
+          if-no-files-found: error
+
+  build-linux:
+    name: Linux x64
+    needs: validate
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Tauri system dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Select stable Rust
+        shell: bash
+        run: |
+          rustup update stable
+          rustup default stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare desktop bundle
+        run: npm run desktop:prepare
+
+      - name: Build DEB and AppImage packages
+        run: node scripts/run-tauri.mjs build --bundles deb,appimage --no-sign --ci
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+
+          DEB="$(find src-tauri/target/release/bundle/deb -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          APPIMAGE="$(find src-tauri/target/release/bundle/appimage -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+
+          test -n "$DEB"
+          test -n "$APPIMAGE"
+
+          cp "$DEB" "release-assets/Easy.Local.MCP_${RELEASE_VERSION}_linux-x64.deb"
+          cp "$APPIMAGE" "release-assets/Easy.Local.MCP_${RELEASE_VERSION}_linux-x64.AppImage"
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-linux-x64
+          path: release-assets/*
+          if-no-files-found: error
+
+  build-macos:
+    name: macOS ${{ matrix.arch }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    env:
+      RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Select stable Rust
+        shell: bash
+        run: |
+          rustup update stable
+          rustup default stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare desktop bundle
+        run: npm run desktop:prepare
+
+      - name: Build DMG
+        run: node scripts/run-tauri.mjs build --bundles dmg --no-sign --ci
+
+      - name: Collect release asset
+        shell: bash
+        env:
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+
+          DMG="$(find src-tauri/target/release/bundle/dmg -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+          test -n "$DMG"
+
+          cp "$DMG" "release-assets/Easy.Local.MCP_${RELEASE_VERSION}_macos-${RELEASE_ARCH}.dmg"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-macos-${{ matrix.arch }}
+          path: release-assets/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    permissions:
+      contents: write
+    needs:
+      - validate
+      - build-windows
+      - build-linux
+      - build-macos
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Download built artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create or update GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/* --clobber
+          else
+            gh release create "$RELEASE_TAG" release-assets/* \
+              --title "Easy Local MCP $RELEASE_TAG" \
+              --generate-notes
+          fi
