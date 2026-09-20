@@ -1581,20 +1581,33 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     }
   });
 
+  const slowStarted=join(root,'slow-external-started');
   const slowExternal=client.callTool({
     name:'call_mcp_tool',
     arguments:{
       server:'fixture',
       tool:'echo',
       arguments:{
-        text:'slow'
+        text:'slow:'+slowStarted
       }
     }
   });
 
-  await new Promise(
-    resolveDelay=>setTimeout(resolveDelay,100)
-  );
+  const slowStartDeadline=Date.now()+5000;
+  while(true){
+    try{
+      assert.equal(await readFile(slowStarted,'utf8'),'started');
+      break;
+    }catch(error:any){
+      if(error?.code!=='ENOENT')throw error;
+      if(Date.now()>=slowStartDeadline){
+        throw new Error('slow external fixture did not start in time');
+      }
+      await new Promise(
+        resolveDelay=>setTimeout(resolveDelay,25)
+      );
+    }
+  }
 
   const duringSlow=client.callTool({
     name:'list_workspaces',
