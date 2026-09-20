@@ -32,6 +32,7 @@
     "dev": "tsx src/index.ts",
     "desktop": "node dist/index.js desktop",
     "tray": "node dist/index.js tray",
+    "icons:generate": "node scripts/generate-icons.mjs",
     "tray:check": "node scripts/run-cargo.mjs check --manifest-path src-tauri/Cargo.toml",
     "tray:build": "node scripts/run-cargo.mjs build --release --manifest-path src-tauri/Cargo.toml",
     "desktop:prepare": "npm run build && node scripts/prepare-desktop-bundle.mjs",

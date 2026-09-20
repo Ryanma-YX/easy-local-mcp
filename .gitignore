@@ -9,6 +9,7 @@ localmcp.json
 .wrangler-local-zone/
 .dev.vars*
 src-tauri/target/
+.icon-build/
 src-tauri/gen/
 src-tauri/resources/*
 !src-tauri/resources/.gitkeep

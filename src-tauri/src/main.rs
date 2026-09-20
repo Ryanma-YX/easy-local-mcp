@@ -12,12 +12,28 @@ use std::{
 };
 
 use tauri::{
+    image::Image,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::WebviewWindowBuilder,
     Manager, WebviewUrl, WindowEvent,
 };
 use url::Url;
+
+#[cfg(target_os = "windows")]
+const PLATFORM_ICON_BYTES: &[u8] = include_bytes!("../icons/icon-windows.png");
+#[cfg(target_os = "macos")]
+const PLATFORM_ICON_BYTES: &[u8] = include_bytes!("../icons/icon-macos.png");
+#[cfg(target_os = "linux")]
+const PLATFORM_ICON_BYTES: &[u8] = include_bytes!("../icons/icon-linux.png");
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+const PLATFORM_ICON_BYTES: &[u8] = include_bytes!("../icons/icon.png");
+
+fn platform_app_icon() -> Result<Image<'static>, String> {
+    Image::from_bytes(PLATFORM_ICON_BYTES)
+        .map(Image::to_owned)
+        .map_err(|error| format!("Unable to load platform app icon: {error}"))
+}
 
 struct HostProcess(Mutex<Option<Child>>);
 
@@ -274,7 +290,8 @@ fn main() {
                 .map_err(std::io::Error::other)?;
             let navigation_target = control.clone();
 
-            let window = WebviewWindowBuilder::new(
+            let platform_icon = platform_app_icon().map_err(std::io::Error::other)?;
+            let mut window_builder = WebviewWindowBuilder::new(
                 app,
                 "main",
                 WebviewUrl::External(control.clone()),
@@ -288,9 +305,14 @@ fn main() {
                     && url.host_str() == Some("127.0.0.1")
                     && url.port_or_known_default()
                         == navigation_target.port_or_known_default()
-            })
-            .build()?;
+            });
 
+            #[cfg(not(target_os = "macos"))]
+            {
+                window_builder = window_builder.icon(platform_icon.clone())?;
+            }
+
+            let window = window_builder.build()?;
             let close_window = window.clone();
             window.on_window_event(move |event| {
                 if let WindowEvent::CloseRequested { api, .. } = event {
@@ -343,9 +365,7 @@ fn main() {
                     }
                 });
 
-            if let Some(icon) = app.default_window_icon() {
-                tray = tray.icon(icon.clone());
-            }
+            tray = tray.icon(platform_icon);
 
             tray.build(app)?;
 

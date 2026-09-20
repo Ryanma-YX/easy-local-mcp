@@ -9,5 +9,5 @@ license = "MIT"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2.11.5", features = ["tray-icon"] }
+tauri = { version = "2.11.5", features = ["tray-icon", "image-png"] }
 url = "2.5"
