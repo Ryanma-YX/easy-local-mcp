@@ -33,9 +33,13 @@ Read-only capabilities can remain available while locked when enabled.
 
 ## LOCK lifecycle
 
-The Agent starts **LOCKED**.
+Timed unlock is the default security mode. A timed unlock creates a lease with both an idle expiry and an absolute hard limit.
 
-Unlock is local-only and expires automatically. The Agent returns to LOCKED state after restart.
+Successful privileged tool calls may renew the idle expiry while the lease is active, but read-only calls, status checks, failed calls, heartbeats, and tool discovery do not renew it. The hard limit is never extended.
+
+Standalone devices may optionally enable **Always Unlocked** from the local Control Center. This is disabled by default and requires an explicit risk confirmation. While enabled, privileged capabilities remain available while the Agent is running, so anyone who obtains that device's MCP credential may use those enabled capabilities without another unlock step.
+
+Zone members cannot use Always Unlocked. Joining a Zone disables it automatically. A Relay Administrator may remotely unlock an online Zone member for **5, 15, 30, or 60 minutes**. Remote Unlock is a Relay Admin control-plane operation; it is not exposed through the normal device MCP URL or the shared Zone MCP connector.
 
 Useful commands:
 
@@ -43,6 +47,8 @@ Useful commands:
 easy-local-mcp unlock
 easy-local-mcp lock
 ```
+
+The Control Center displays unlock times in the operating system's local time zone. Stored and transmitted timestamps remain ISO/UTC for interoperability.
 
 ## Workspace boundary
 

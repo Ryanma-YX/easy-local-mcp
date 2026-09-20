@@ -13,9 +13,14 @@ export const unlockFile=resolve(securityStateDir,'unlock.json');
 export const auditFile=resolve(securityStateDir,'audit.log');
 export const controlSecretFile=resolve(securityStateDir,'control.secret');
 
+export type UnlockSource='local'|'remote'|'always';
+
 export interface UnlockStatus {
   locked:boolean;
   expiresAt:string|null;
+  hardExpiresAt:string|null;
+  source:UnlockSource|null;
+  lastActivityAt:string|null;
 }
 
 async function restrictPath(path:string){
@@ -110,53 +115,201 @@ export async function auditSecurity(event:string,fields:Record<string,unknown>={
   }
 }
 
-async function readUnlockUntil():Promise<number>{
-  try{
-    const parsed=JSON.parse(await readFile(unlockFile,'utf8')) as {until?:unknown};
-    const until=typeof parsed.until==='number'?parsed.until:0;
+interface UnlockLeaseFile {
+  version?:number;
+  source?:'local'|'remote';
+  until?:number;
+  hardUntil?:number;
+  idleMinutes?:number;
+  lastActivityAt?:number;
+}
 
-    if(until>Date.now())return until;
+async function readUnlockLease():Promise<UnlockLeaseFile|null>{
+  try{
+    const parsed=JSON.parse(await readFile(unlockFile,'utf8')) as UnlockLeaseFile;
+    const until=typeof parsed.until==='number'?parsed.until:0;
+    const hardUntil=typeof parsed.hardUntil==='number'?parsed.hardUntil:until;
+    const source=parsed.source==='remote'?'remote':'local';
+
+    if(until>Date.now()&&hardUntil>Date.now()){
+      return {
+        version:2,
+        source,
+        until,
+        hardUntil,
+        idleMinutes:
+          typeof parsed.idleMinutes==='number'
+            ? parsed.idleMinutes
+            : Math.max(1,Math.ceil((until-Date.now())/60_000)),
+        lastActivityAt:
+          typeof parsed.lastActivityAt==='number'
+            ? parsed.lastActivityAt
+            : undefined
+      };
+    }
 
     await rm(unlockFile,{force:true});
-    if(until)await auditSecurity('unlock_expired');
-    return 0;
+    if(until||hardUntil){
+      await auditSecurity(
+        source==='remote'?'remote_unlock_expired':'unlock_expired'
+      );
+    }
+    return null;
   }catch(error:any){
-    if(error?.code==='ENOENT')return 0;
+    if(error?.code==='ENOENT')return null;
     await rm(unlockFile,{force:true}).catch(()=>{});
-    return 0;
+    return null;
   }
 }
 
-export async function getUnlockStatus():Promise<UnlockStatus>{
-  const until=await readUnlockUntil();
-
-  return {
-    locked:until<=Date.now(),
-    expiresAt:until>Date.now()?new Date(until).toISOString():null
-  };
-}
-
-export async function isUnlocked(){
-  return !(await getUnlockStatus()).locked;
-}
-
-export async function unlockLocal(minutes=30):Promise<UnlockStatus>{
-  if(!Number.isInteger(minutes)||minutes<1||minutes>480){
-    throw new Error('Unlock duration must be an integer from 1 to 480 minutes');
+export async function getUnlockStatus(
+  alwaysUnlocked=false
+):Promise<UnlockStatus>{
+  if(alwaysUnlocked){
+    return {
+      locked:false,
+      expiresAt:null,
+      hardExpiresAt:null,
+      source:'always',
+      lastActivityAt:null
+    };
   }
 
-  const until=Date.now()+minutes*60_000;
-
-  await secureWriteFile(unlockFile,JSON.stringify({until}));
-  await auditSecurity('unlock',{
-    minutes,
-    expiresAt:new Date(until).toISOString()
-  });
+  const lease=await readUnlockLease();
+  if(!lease){
+    return {
+      locked:true,
+      expiresAt:null,
+      hardExpiresAt:null,
+      source:null,
+      lastActivityAt:null
+    };
+  }
 
   return {
     locked:false,
-    expiresAt:new Date(until).toISOString()
+    expiresAt:new Date(lease.until!).toISOString(),
+    hardExpiresAt:new Date(lease.hardUntil!).toISOString(),
+    source:lease.source??'local',
+    lastActivityAt:
+      typeof lease.lastActivityAt==='number'
+        ? new Date(lease.lastActivityAt).toISOString()
+        : null
   };
+}
+
+export async function isUnlocked(alwaysUnlocked=false){
+  return !(await getUnlockStatus(alwaysUnlocked)).locked;
+}
+
+export async function unlockLocal(
+  minutes=30,
+  options:{
+    source?:'local'|'remote';
+    maxSessionMinutes?:number;
+  }={}
+):Promise<UnlockStatus>{
+  const source=options.source??'local';
+  const maxAllowed=source==='remote'?60:480;
+
+  if(!Number.isInteger(minutes)||minutes<1||minutes>maxAllowed){
+    throw new Error(
+      source==='remote'
+        ? 'Remote unlock duration must be an integer from 1 to 60 minutes'
+        : 'Unlock duration must be an integer from 1 to 480 minutes'
+    );
+  }
+
+  const maxSessionMinutes=Math.max(
+    minutes,
+    Math.min(
+      source==='remote'?60:480,
+      Number.isInteger(options.maxSessionMinutes)
+        ? options.maxSessionMinutes!
+        : source==='remote'?60:240
+    )
+  );
+  const now=Date.now();
+  const until=now+minutes*60_000;
+  const hardUntil=now+maxSessionMinutes*60_000;
+
+  await secureWriteFile(
+    unlockFile,
+    JSON.stringify({
+      version:2,
+      source,
+      until,
+      hardUntil,
+      idleMinutes:minutes,
+      lastActivityAt:now
+    })
+  );
+
+  await auditSecurity(
+    source==='remote'?'remote_unlock':'unlock',
+    {
+      source,
+      minutes,
+      expiresAt:new Date(until).toISOString(),
+      hardExpiresAt:new Date(hardUntil).toISOString()
+    }
+  );
+
+  return getUnlockStatus(false);
+}
+
+export async function renewUnlockLease(
+  config:Pick<
+    Config,
+    'alwaysUnlocked'
+    |'renewUnlockOnPrivilegedUse'
+    |'unlockIdleMinutes'
+    |'unlockMaxSessionMinutes'
+  >
+):Promise<UnlockStatus>{
+  if(config.alwaysUnlocked){
+    return getUnlockStatus(true);
+  }
+
+  const lease=await readUnlockLease();
+  if(!lease||!config.renewUnlockOnPrivilegedUse){
+    return getUnlockStatus(false);
+  }
+
+  const now=Date.now();
+  const idleMinutes=Math.max(
+    1,
+    Math.min(120,lease.idleMinutes??config.unlockIdleMinutes)
+  );
+  const hardUntil=lease.hardUntil??(
+    now+config.unlockMaxSessionMinutes*60_000
+  );
+  const nextUntil=Math.min(now+idleMinutes*60_000,hardUntil);
+
+  if(nextUntil<=now){
+    await rm(unlockFile,{force:true});
+    return getUnlockStatus(false);
+  }
+
+  await secureWriteFile(
+    unlockFile,
+    JSON.stringify({
+      version:2,
+      source:lease.source??'local',
+      until:nextUntil,
+      hardUntil,
+      idleMinutes,
+      lastActivityAt:now
+    })
+  );
+
+  await auditSecurity('unlock_renewed',{
+    source:lease.source??'local',
+    expiresAt:new Date(nextUntil).toISOString(),
+    hardExpiresAt:new Date(hardUntil).toISOString()
+  });
+
+  return getUnlockStatus(false);
 }
 
 export async function lockLocal(reason='manual'):Promise<UnlockStatus>{
@@ -165,7 +318,10 @@ export async function lockLocal(reason='manual'):Promise<UnlockStatus>{
 
   return {
     locked:true,
-    expiresAt:null
+    expiresAt:null,
+    hardExpiresAt:null,
+    source:null,
+    lastActivityAt:null
   };
 }
 
@@ -256,14 +412,13 @@ export async function authorizeTool(
     };
   }
 
-  if(privileged&&!(await isUnlocked())){
+  if(privileged&&!(await isUnlocked(config.alwaysUnlocked))){
     return {
       allowed:false,
       privileged:true,
-      reason:'Easy Local MCP is locked. Unlock locally before using privileged tools.'
+      reason:'Easy Local MCP is locked. Unlock it before using privileged tools.'
     };
   }
-
   return {
     allowed:true,
     privileged

@@ -1167,6 +1167,73 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     ).isError,
     true
   );
+  const remoteAdminLogin=await fetch(
+    origin+'/api/admin/login',
+    {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({token:relayAdminToken})
+    }
+  );
+  assert.equal(remoteAdminLogin.status,200);
+  const remoteAdminCookie=(remoteAdminLogin.headers.get('set-cookie')||'').split(';')[0];
+
+  const remoteUnlockPath=
+    `${origin}/api/admin/zones/${createdZone.zoneId}/devices/${registered.deviceId}/unlock`;
+
+  assert.equal(
+    (
+      await fetch(
+        remoteUnlockPath,
+        {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({minutes:30})
+        }
+      )
+    ).status,
+    401,
+    'Remote unlock must require the Relay Admin session'
+  );
+
+  const remoteUnlock=await fetch(
+    remoteUnlockPath,
+    {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        Cookie:remoteAdminCookie
+      },
+      body:JSON.stringify({minutes:30})
+    }
+  );
+  assert.equal(remoteUnlock.status,200);
+  const remoteUnlockResult:any=await remoteUnlock.json();
+  assert.equal(remoteUnlockResult.ok,true);
+  assert.equal(remoteUnlockResult.source,'remote');
+  assert.match(
+    await cli('status'),
+    /Unlock source: remote/
+  );
+
+  const zoneRemoteWrite:any=await zoneClient.callTool({
+    name:'write_file',
+    arguments:{
+      device:'Zone Worker',
+      path:'zone-remote-unlocked.txt',
+      content:'remote admin unlock'
+    }
+  });
+  assert.equal(zoneRemoteWrite.isError,undefined);
+  assert.equal(
+    await readFile(join(root,'zone-remote-unlocked.txt'),'utf8'),
+    'remote admin unlock'
+  );
+
+  assert.match(
+    await cli('lock'),
+    /Security: LOCKED/
+  );
 
   assert.match(
     await cli('unlock','--minutes','5'),

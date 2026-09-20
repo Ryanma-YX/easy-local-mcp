@@ -180,6 +180,8 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
   assert.match(html,/Easy Local MCP Control Center/);
   assert.match(html,/do not sandbox shell commands/);
   assert.match(html,/Agent lifecycle/);
+  assert.match(html,/Enable Always Unlocked/);
+  assert.match(html,/Time zone/);
   assert.match(html,/Re-register Worker/);
   assert.match(html,/auditPageSize/);
   assert.match(html,/auditPrev/);
@@ -194,6 +196,8 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
   assert.match(inlineScript,/withOperation/);
   assert.match(inlineScript,/operationActive/);
   assert.match(inlineScript,/askConfirmation/);
+  assert.match(inlineScript,/resolvedOptions\(\)\.timeZone/);
+  assert.match(inlineScript,/toLocaleString/);
   assert.doesNotMatch(inlineScript,/\bconfirm\s*\(/);
   assert.match(inlineScript,/Saving permission profile/);
   assert.match(inlineScript,/Saving workspaces/);
@@ -298,7 +302,7 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
     await realpath(workspace)
   );
 
-  for(const minutes of [5,30,60]){
+  for(const minutes of [5,15,30,60]){
     const unlocked=await api('/api/unlock',{minutes});
     assert.equal(unlocked.response.status,200);
     assert.equal(unlocked.value.agent.locked,false);
@@ -314,6 +318,49 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
   assert.equal(locked.response.status,200);
   assert.equal(locked.value.agent.locked,true);
   assert.ok(!JSON.stringify(locked.value).includes('a'.repeat(64)));
+
+  const alwaysWithoutRisk=await api('/api/security/always-unlocked',{
+    enabled:true,
+    confirmRisk:false
+  });
+  assert.equal(alwaysWithoutRisk.response.status,400);
+  assert.match(alwaysWithoutRisk.value.error,/risk confirmation/i);
+
+  const alwaysEnabled=await api('/api/security/always-unlocked',{
+    enabled:true,
+    confirmRisk:true
+  });
+  assert.equal(alwaysEnabled.response.status,200);
+  let alwaysConfig=JSON.parse(await readFile(configPath,'utf8'));
+  assert.equal(alwaysConfig.security.alwaysUnlocked,true);
+  assert.equal(alwaysConfig.security.renewOnPrivilegedUse,true);
+  assert.equal(alwaysConfig.security.idleMinutes,30);
+  assert.equal(alwaysConfig.security.maxSessionMinutes,240);
+
+  const alwaysDisabled=await api('/api/security/always-unlocked',{
+    enabled:false
+  });
+  assert.equal(alwaysDisabled.response.status,200);
+  alwaysConfig=JSON.parse(await readFile(configPath,'utf8'));
+  assert.equal(alwaysConfig.security.alwaysUnlocked,false);
+
+  await writeFile(
+    join(stateDir,'worker.json'),
+    JSON.stringify({
+      workerUrl:'https://example.test/',
+      agentToken:'b'.repeat(64),
+      mcpToken:'c'.repeat(64),
+      deviceId:'fixture-device',
+      zoneId:'11111111-1111-4111-8111-111111111111'
+    })
+  );
+  const zoneAlwaysRejected=await api('/api/security/always-unlocked',{
+    enabled:true,
+    confirmRisk:true
+  });
+  assert.equal(zoneAlwaysRejected.response.status,400);
+  assert.match(zoneAlwaysRejected.value.error,/Zone member/i);
+  await rm(join(stateDir,'worker.json'),{force:true});
 
   const dangerousWithoutConfirmation=await api('/api/config/update',{
     features:{
@@ -415,7 +462,7 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
     )
   ).stdout;
 
-  assert.match(cliStatus,/reloads:3/);
+  assert.match(cliStatus,/reloads:5/);
   assert.match(cliStatus,/rotations:1/);
   assert.ok(!cliStatus.includes('a'.repeat(64)));
 

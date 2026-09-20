@@ -32,6 +32,10 @@ import {
   secureWriteFile,
   unlockLocal
 } from './security.js';
+import {
+  disableAlwaysUnlocked,
+  securityPolicyPreference
+} from './security-policy.js';
 interface Settings {
   workerUrl:string;
   agentToken:string;
@@ -41,6 +45,9 @@ interface Settings {
 }
 
 await mkdir(stateDir,{recursive:true,mode:0o700});
+if(await zoneJoinCode()){
+  await disableAlwaysUnlocked('zone_join_staged');
+}
 await resetUnlockOnAgentStart();
 await auditSecurity('agent_start',{pid:process.pid});
 
@@ -266,10 +273,11 @@ async function rotateCredentials(){
 
   socket?.terminate();
 }
-
 const closeControl=await serveControl(
   async()=>{
-    const unlock=await getUnlockStatus();
+    const policy=await securityPolicyPreference();
+    const alwaysUnlocked=!settings?.zoneId&&policy.alwaysUnlocked;
+    const unlock=await getUnlockStatus(alwaysUnlocked);
 
     return {
       status:'running',
@@ -282,6 +290,10 @@ const closeControl=await serveControl(
       ready,
       locked:unlock.locked,
       unlockExpiresAt:unlock.expiresAt,
+      unlockHardExpiresAt:unlock.hardExpiresAt,
+      unlockSource:unlock.source,
+      unlockLastActivityAt:unlock.lastActivityAt,
+      alwaysUnlocked,
       workerUrl:origin?.href??null,
       deviceId:settings?.deviceId??null,
       zoneId:settings?.zoneId??null,
@@ -297,9 +309,17 @@ const closeControl=await serveControl(
       await reloading;
     },
     unlock:async minutes=>{
-      await unlockLocal(minutes??30);
+      const policy=await securityPolicyPreference();
+      await unlockLocal(
+        minutes??policy.idleMinutes,
+        {maxSessionMinutes:policy.maxSessionMinutes}
+      );
     },
     lock:async()=>{
+      const disabled=await disableAlwaysUnlocked('manual_lock');
+      if(disabled){
+        await reloadLocal();
+      }
       await lockLocal('manual');
     },
     rotate:rotateCredentials,
@@ -372,14 +392,14 @@ function spawnLocal(){
         ...process.env,
         LOCALMCP_PORT:String(port),
         LOCALMCP_TOKEN:localToken,
-        LOCALMCP_INTERNAL:'1'
+        LOCALMCP_INTERNAL:'1',
+        LOCALMCP_ZONE_ID:settings?.zoneId??''
       },
       stdio:['ignore','ignore','inherit'],
       windowsHide:process.platform==='win32'
     }
   );
 }
-
 function watchLocal(child:ChildProcess){
   child.on('error',error=>{
     console.error(error.message);
@@ -562,7 +582,6 @@ if(!localReady||closing){
         }
       }
     };
-
     ws.on('message',async raw=>{
       const message=raw.toString();
 
@@ -572,7 +591,104 @@ if(!localReady||closing){
       }
 
       try{
+        let control:
+          |{
+              type?:unknown;
+              requestId?:unknown;
+              command?:unknown;
+              minutes?:unknown;
+              zoneId?:unknown;
+            }
+          |undefined;
+
+        try{
+          control=JSON.parse(message);
+        }catch{}
+
+        if(control?.type==='control'){
+          const requestId=
+            typeof control.requestId==='string'
+              ? control.requestId
+              : '';
+          const command=
+            typeof control.command==='string'
+              ? control.command
+              : '';
+          const minutes=Number(control.minutes);
+          const requestedZoneId=
+            typeof control.zoneId==='string'
+              ? control.zoneId
+              : '';
+
+          const sendControlResult=(
+            ok:boolean,
+            extra:Record<string,unknown>={}
+          )=>{
+            if(ws.readyState!==WebSocket.OPEN)return;
+            ws.send(JSON.stringify({
+              type:'control_result',
+              requestId,
+              ok,
+              ...extra
+            }));
+          };
+
+          if(!requestId){
+            sendControlResult(false,{error:'Invalid control request'});
+            return;
+          }
+
+          if(command!=='remote_unlock'){
+            sendControlResult(false,{error:'Unsupported control command'});
+            return;
+          }
+
+          if(!settings?.zoneId){
+            sendControlResult(false,{
+              error:'Remote unlock is available only for Zone members'
+            });
+            return;
+          }
+
+          if(requestedZoneId!==settings.zoneId){
+            sendControlResult(false,{
+              error:'Remote unlock Zone does not match this device membership'
+            });
+            return;
+          }
+
+          if(![5,15,30,60].includes(minutes)){
+            sendControlResult(false,{
+              error:'Remote unlock duration must be 5, 15, 30, or 60 minutes'
+            });
+            return;
+          }
+
+          await disableAlwaysUnlocked('zone_remote_unlock');
+          const unlocked=await unlockLocal(
+            minutes,
+            {
+              source:'remote',
+              maxSessionMinutes:60
+            }
+          );
+          await auditSecurity('remote_unlock_applied',{
+            actor:'relay_admin',
+            zoneId:settings.zoneId,
+            deviceId:settings.deviceId,
+            minutes
+          });
+          sendControlResult(true,{
+            expiresAt:unlocked.expiresAt,
+            hardExpiresAt:unlocked.hardExpiresAt,
+            source:unlocked.source
+          });
+          return;
+        }
+
         const frame=parseFrame(message);
+
+
 
         if(activeRequests.has(frame.id)){
           throw new Error('Duplicate active request');

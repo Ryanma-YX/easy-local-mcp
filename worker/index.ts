@@ -604,6 +604,73 @@ export default {
       });
     }
 
+    const adminDeviceUnlockMatch=/^\/api\/admin\/zones\/([0-9a-f-]{36})\/devices\/([0-9a-f-]{36})\/unlock$/.exec(url.pathname);
+    if(adminDeviceUnlockMatch&&request.method==='POST'){
+      if(!sameOriginAllowed(request,url)){
+        return json({error:'Origin not allowed'},403);
+      }
+
+      if(!await relayAdminAuthorized(request,env)){
+        return json({error:'Authentication required'},401);
+      }
+
+      const zoneId=adminDeviceUnlockMatch[1];
+      const deviceId=adminDeviceUnlockMatch[2];
+      if(!validUuid(zoneId)||!validUuid(deviceId)){
+        return json({error:'Device not found'},404);
+      }
+
+      let body:Record<string,unknown>;
+      try{
+        body=JSON.parse(await bodyText(request,8*1024)) as Record<string,unknown>;
+      }catch{
+        return json({error:'Invalid JSON'},400);
+      }
+
+      const minutes=Number(body.minutes);
+      if(![5,15,30,60].includes(minutes)){
+        return json({
+          error:'Remote unlock duration must be 5, 15, 30, or 60 minutes'
+        },400);
+      }
+
+      const zoneResponse=await zone(env,zoneId).fetch(
+        new Request(
+          'https://zone.internal/info',
+          {
+            headers:{
+              'x-localmcp-relay-admin':'1'
+            }
+          }
+        )
+      );
+      if(!zoneResponse.ok)return zoneResponse;
+
+      const zoneData=await zoneResponse.json() as {
+        devices:Array<{deviceId:string}>;
+      };
+      if(!zoneData.devices.some(device=>device.deviceId===deviceId)){
+        return json({error:'Device not found'},404);
+      }
+
+      return relay(env,deviceId).fetch(
+        new Request(
+          'https://relay.internal/remote-unlock',
+          {
+            method:'POST',
+            headers:{
+              'Content-Type':'application/json',
+              'x-localmcp-internal':'1'
+            },
+            body:JSON.stringify({
+              zoneId,
+              minutes
+            })
+          }
+        )
+      );
+    }
+
     const adminDeviceMatch=/^\/api\/admin\/zones\/([0-9a-f-]{36})\/devices\/([0-9a-f-]{36})$/.exec(url.pathname);
     if(adminDeviceMatch&&(request.method==='PATCH'||request.method==='DELETE')){
       if(!sameOriginAllowed(request,url)){
@@ -1400,15 +1467,21 @@ interface Pending {
   lane:PendingLane;
 }
 
+interface ControlPending {
+  socket:WebSocket;
+  resolve:(response:Response)=>void;
+  timer:ReturnType<typeof setTimeout>;
+}
+
 export class McpRelay {
   private pending=new Map<string,Pending>();
+  private controlPending=new Map<string,ControlPending>();
 
   constructor(private ctx:DurableObjectState){
     ctx.setWebSocketAutoResponse(
       new WebSocketRequestResponsePair('ping','pong')
     );
   }
-
   private pendingInLane(lane:PendingLane){
     let count=0;
     for(const pending of this.pending.values()){
@@ -1440,6 +1513,62 @@ export class McpRelay {
         return new Response(null,{status:404});
       }
       return json({ok:true});
+    }
+
+    if(
+      url.pathname==='/remote-unlock'
+      && request.method==='POST'
+      && request.headers.get('x-localmcp-internal')==='1'
+    ){
+      const socket=this.ctx.getWebSockets('agent')[0];
+      if(!socket){
+        return json({error:'Local agent offline. Start localmcp.'},503);
+      }
+
+      let body:Record<string,unknown>;
+      try{
+        body=JSON.parse(await request.text()) as Record<string,unknown>;
+      }catch{
+        return json({error:'Invalid JSON'},400);
+      }
+
+      const minutes=Number(body.minutes);
+      const zoneId=typeof body.zoneId==='string'?body.zoneId:'';
+      if(!validUuid(zoneId)||![5,15,30,60].includes(minutes)){
+        return json({error:'Invalid remote unlock request'},400);
+      }
+
+      const requestId=crypto.randomUUID();
+      return new Promise<Response>(resolveResponse=>{
+        const timer=setTimeout(()=>{
+          this.controlPending.delete(requestId);
+          resolveResponse(json({
+            error:'Remote unlock timed out; device may be offline or busy.'
+          },504));
+        },15000);
+
+        this.controlPending.set(requestId,{
+          socket,
+          resolve:resolveResponse,
+          timer
+        });
+
+        try{
+          socket.send(JSON.stringify({
+            type:'control',
+            requestId,
+            command:'remote_unlock',
+            minutes,
+            zoneId
+          }));
+        }catch{
+          clearTimeout(timer);
+          this.controlPending.delete(requestId);
+          resolveResponse(json({
+            error:'Unable to send remote unlock request to Agent.'
+          },502));
+        }
+      });
     }
 
     if(
@@ -1673,9 +1802,62 @@ export class McpRelay {
         throw new Error('Text frames required');
       }
 
+
+      let control:
+        |{
+            type?:unknown;
+            requestId?:unknown;
+            ok?:unknown;
+            error?:unknown;
+            expiresAt?:unknown;
+            hardExpiresAt?:unknown;
+            source?:unknown;
+          }
+        |undefined;
+      try{
+        control=JSON.parse(message);
+      }catch{}
+
+      if(control?.type==='control_result'){
+        const requestId=
+          typeof control.requestId==='string'
+            ? control.requestId
+            : '';
+        const pending=this.controlPending.get(requestId);
+        if(!pending||pending.socket!==socket)return;
+
+        clearTimeout(pending.timer);
+        this.controlPending.delete(requestId);
+
+        if(control.ok===true){
+          pending.resolve(json({
+            ok:true,
+            expiresAt:
+              typeof control.expiresAt==='string'
+                ? control.expiresAt
+                : null,
+            hardExpiresAt:
+              typeof control.hardExpiresAt==='string'
+                ? control.hardExpiresAt
+                : null,
+            source:
+              typeof control.source==='string'
+                ? control.source
+                : 'remote'
+          }));
+        }else{
+          pending.resolve(json({
+            error:
+              typeof control.error==='string'
+                ? control.error
+                : 'Remote unlock was rejected by the Agent.'
+          },409));
+        }
+        return;
+      }
+
       const frame=parseFrame(message);
       const pending=this.pending.get(frame.id);
-
       if(!pending||pending.socket!==socket){
         return;
       }
@@ -1737,6 +1919,15 @@ export class McpRelay {
           )
         );
       }
+    }
+
+    for(const [requestId,pending] of this.controlPending){
+      if(pending.socket!==socket)continue;
+      clearTimeout(pending.timer);
+      this.controlPending.delete(requestId);
+      pending.resolve(json({
+        error:'Local agent disconnected before the control operation completed.'
+      },502));
     }
   }
 

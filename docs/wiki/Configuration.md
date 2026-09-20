@@ -93,6 +93,28 @@ Processes depend on shell being enabled.
 
 Shell is not a workspace sandbox. Commands run with the current operating-system user's authority, so these capabilities are protected by LOCK / UNLOCK.
 
+## Unlock policy
+
+Optional security policy settings:
+
+```json
+{
+  "security": {
+    "alwaysUnlocked": false,
+    "renewOnPrivilegedUse": true,
+    "idleMinutes": 30,
+    "maxSessionMinutes": 240
+  }
+}
+```
+
+- `alwaysUnlocked`: Standalone-only persistent unlock. Default `false`. Enable it from the local Control Center so the additional-risk confirmation is shown.
+- `renewOnPrivilegedUse`: successful privileged tool calls renew the idle expiry. Read-only, failed, status, heartbeat, and discovery requests do not renew it.
+- `idleMinutes`: default timed unlock / renewal window.
+- `maxSessionMinutes`: absolute hard cap for a local timed unlock session.
+
+Zone membership always disables the effective Always Unlocked mode, even if the configuration file is edited manually. Relay Admin Remote Unlock uses its own 5/15/30/60-minute choices and a maximum 60-minute hard session.
+
 ## Skills
 
 ```json
