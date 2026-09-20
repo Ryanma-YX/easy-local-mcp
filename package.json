@@ -1,6 +1,6 @@
 {
   "name": "easy-local-mcp",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Easy Local MCP - secure local MCP bridge for ChatGPT with files, shell, processes, skills, workspaces and pluggable MCP servers",
   "main": "dist/index.js",
   "type": "module",
