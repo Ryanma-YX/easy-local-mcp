@@ -93,7 +93,9 @@ Existing configured external MCP servers remain discoverable through the migrati
 
 ## Local LOCK / UNLOCK gate
 
-The Agent always starts **LOCKED**.
+Timed unlock is the default mode, and the Agent starts **LOCKED** in that mode.
+
+A Standalone device may explicitly opt into **Always Unlocked** from the local Control Center after acknowledging the additional risk. Zone members cannot use Always Unlocked; joining a Zone disables it.
 
 Privileged operations are unavailable while locked even if the configuration enables them.
 
@@ -112,11 +114,15 @@ Default unlock duration is 30 minutes. Unlock duration must be between 1 and 480
 
 Unlock state:
 
-- can only be changed through the local control channel
 - is never exposed as an MCP tool
-- expires automatically
-- resets to LOCKED after Agent restart
+- uses a timed lease by default
+- may renew its idle expiry only after successful privileged tool execution
+- never extends beyond its absolute hard session limit
 - can be revoked immediately with `localmcp lock`
+- may be set to Always Unlocked only for a Standalone device through the local Control Center
+- may be remotely granted for 5, 15, 30, or 60 minutes only to an online Zone member through the authenticated Relay Admin control plane
+- rejects Remote Unlock on Standalone devices and rejects Zone mismatches
+- stores/transmits timestamps as ISO/UTC while the desktop UI renders them in the operating system's local time zone
 
 Privileged capabilities include:
 

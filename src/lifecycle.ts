@@ -24,6 +24,10 @@ export interface Status {
   ready:boolean;
   locked:boolean;
   unlockExpiresAt:string|null;
+  unlockHardExpiresAt:string|null;
+  unlockSource:'local'|'remote'|'always'|null;
+  unlockLastActivityAt:string|null;
+  alwaysUnlocked:boolean;
   workerUrl:string|null;
   deviceId:string|null;
   zoneId:string|null;
@@ -152,6 +156,10 @@ export async function status():Promise<Status>{
       ready:false,
       locked:true,
       unlockExpiresAt:null,
+      unlockHardExpiresAt:null,
+      unlockSource:null,
+      unlockLastActivityAt:null,
+      alwaysUnlocked:false,
       workerUrl:null,
       deviceId:null,
       zoneId:null,
@@ -160,12 +168,21 @@ export async function status():Promise<Status>{
   }
 }
 
+function localDisplayTime(value:string|null){
+  if(!value)return '-';
+  const date=new Date(value);
+  if(Number.isNaN(date.getTime()))return value;
+  return date.toLocaleString(undefined,{timeZoneName:'short'});
+}
+
 export function printStatus(value:Status){
   console.log(
     `Status: ${value.status}\n`
     + `PID: ${value.pid??'-'}\n`
     + `Security: ${value.locked?'LOCKED':'UNLOCKED'}\n`
-    + `Unlock expires: ${value.unlockExpiresAt??'-'}\n`
+    + `Unlock expires: ${localDisplayTime(value.unlockExpiresAt)}\n`
+    + `Unlock source: ${value.unlockSource??'-'}\n`
+    + `Unlock hard limit: ${localDisplayTime(value.unlockHardExpiresAt)}\n`
     + `MCP URL: ${maskMcpUrl(value.url)}\n`
     + `Config: ${value.config}\n`
     + `Log: ${value.log}`

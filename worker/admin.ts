@@ -410,6 +410,44 @@ async function openZone(zoneId){
     const actions=document.createElement('div');
     actions.className='actions';
 
+    const unlockMinutes=document.createElement('select');
+    unlockMinutes.setAttribute('aria-label','Remote unlock duration');
+    for(const minutes of [5,15,30,60]){
+      const option=document.createElement('option');
+      option.value=String(minutes);
+      option.textContent=minutes+'m';
+      if(minutes===30)option.selected=true;
+      unlockMinutes.appendChild(option);
+    }
+    unlockMinutes.disabled=!device.online;
+
+    const remoteUnlock=document.createElement('button');
+    remoteUnlock.className='secondary';
+    remoteUnlock.textContent='Remote Unlock';
+    remoteUnlock.disabled=!device.online;
+    remoteUnlock.onclick=()=>withOperation(
+      'Remotely unlocking '+device.name+'…',
+      async()=>{
+        const minutes=Number(unlockMinutes.value);
+        const result=await api(
+          '/api/admin/zones/'+encodeURIComponent(activeZoneId)
+            +'/devices/'+encodeURIComponent(device.deviceId)
+            +'/unlock',
+          {
+            method:'POST',
+            headers:jsonHeaders,
+            body:JSON.stringify({minutes})
+          }
+        );
+        show(
+          device.name+' remotely unlocked for '+minutes+' minutes'
+            +(result.expiresAt
+              ? ' · expires '+new Date(result.expiresAt).toLocaleString()
+              : '')
+        );
+      }
+    );
+
     const copy=document.createElement('button');
     copy.className='copy';
     copy.textContent='Copy ID';
@@ -446,7 +484,7 @@ async function openZone(zoneId){
       });
     };
 
-    actions.append(copy,rename,revoke);
+    actions.append(unlockMinutes,remoteUnlock,copy,rename,revoke);
     row.append(info,state,actions);
     host.appendChild(row);
   }

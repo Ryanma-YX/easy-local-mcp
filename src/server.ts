@@ -7,7 +7,7 @@ import { runCommand } from './command.js';
 import { ProcessManager } from './process.js';
 import type { McpLoader } from './mcp/loader.js';
 import type { Skill } from './skills/loader.js';
-import { auditSecurity, authorizeTool, configuredForTool, getUnlockStatus } from './security.js';
+import { auditSecurity, authorizeTool, configuredForTool, getUnlockStatus, renewUnlockLease } from './security.js';
 
 const W=z.string().optional(),withWorkspace=<T extends z.ZodRawShape>(shape:T)=>z.object({workspace:W,...shape});
 const schemas={
@@ -102,26 +102,49 @@ export async function createServer(config:Config,mcp:McpLoader,skills:Skill[],pr
         case'call_mcp_tool':{
           const x=schemas.call_mcp_tool.parse(a);
           const result=await mcp.call(x.server,x.tool,x.arguments) as any;
-          await auditSecurity('privileged_tool_success',{tool:name,externalServer:x.server,externalTool:x.tool,durationMs:Date.now()-started});
+          await auditSecurity('privileged_tool_success',{
+            tool:name,
+            externalServer:x.server,
+            externalTool:x.tool,
+            durationMs:Date.now()-started
+          });
+          await renewUnlockLease(config);
           return result;
         }
         case'workspace_info':{
           const w=select(a.workspace);
-          const unlock=await getUnlockStatus();
+          const unlock=await getUnlockStatus(config.alwaysUnlocked);
           r={
-            workspace:w.name,root:w.ws.root,defaultWorkspace:config.defaultWorkspace,configFile:config.configFile,
-            files:config.files,fileRead:config.fileRead,fileWrite:config.fileWrite,fileDelete:config.fileDelete,
-            shell:config.shell,processes:config.processes,externalMcp:config.externalMcp,
-            locked:unlock.locked,unlockExpiresAt:unlock.expiresAt,
-            skills:skills.map(s=>s.name),mcpServers:Object.keys(config.mcpServers),
-            fileLimitBytes:1048576,persistentProcesses:config.processes
+            workspace:w.name,
+            root:w.ws.root,
+            defaultWorkspace:config.defaultWorkspace,
+            configFile:config.configFile,
+            files:config.files,
+            fileRead:config.fileRead,
+            fileWrite:config.fileWrite,
+            fileDelete:config.fileDelete,
+            shell:config.shell,
+            processes:config.processes,
+            externalMcp:config.externalMcp,
+            locked:unlock.locked,
+            unlockExpiresAt:unlock.expiresAt,
+            unlockHardExpiresAt:unlock.hardExpiresAt,
+            unlockSource:unlock.source,
+            skills:skills.map(s=>s.name),
+            mcpServers:Object.keys(config.mcpServers),
+            fileLimitBytes:1048576,
+            persistentProcesses:config.processes
           };
           break;
         }
         case'list_workspaces':
-          r={defaultWorkspace:config.defaultWorkspace,workspaces:Object.entries(config.workspaces).map(([workspaceName,root])=>({name:workspaceName,root}))};
+          r={
+            defaultWorkspace:config.defaultWorkspace,
+            workspaces:Object.entries(config.workspaces).map(
+              ([workspaceName,root])=>({name:workspaceName,root})
+            )
+          };
           break;
-        case'list_skills':
           r={skills:skills.map(({name:skillName,description,path})=>({name:skillName,description,path}))};
           break;
         case'read_skill':{
@@ -195,7 +218,14 @@ export async function createServer(config:Config,mcp:McpLoader,skills:Skill[],pr
           throw new Error('Unknown tool');
       }
 
-      if(privileged)await auditSecurity('privileged_tool_success',{tool:name,workspace:a.workspace,durationMs:Date.now()-started});
+      if(privileged){
+        await auditSecurity('privileged_tool_success',{
+          tool:name,
+          workspace:a.workspace,
+          durationMs:Date.now()-started
+        });
+        await renewUnlockLease(config);
+      }
       return{content:[{type:'text',text:JSON.stringify(r)}]};
     }catch(error){
       if(privileged)await auditSecurity('privileged_tool_failure',{tool:name,workspace:a.workspace,durationMs:Date.now()-started,error:error instanceof Error?error.name:'Error'});

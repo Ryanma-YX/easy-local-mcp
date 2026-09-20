@@ -46,6 +46,7 @@ The page can:
 - rotate the Zone connector credential
 - generate a one-time join code
 - list devices and their online/offline state
+- remotely unlock an online Zone member for 5, 15, 30, or 60 minutes
 - rename a device
 - revoke a device
 
@@ -63,6 +64,8 @@ The desktop Control Center is the preferred path:
 4. On an already registered device, open **Zone membership**, paste the code, and choose **Join Zone**.
 
 The Control Center automatically stops the Agent when needed, retires the previous Relay registration, consumes the Join Code, creates fresh per-device Zone credentials, restarts the Agent, and waits for the new registration before reporting success.
+
+Before joining, the Control Center explicitly warns that the Relay Administrator will be able to route Zone MCP requests to this device, remotely unlock privileged capabilities for a limited time while the device is online, and revoke the device. Zone membership also disables Standalone **Always Unlocked**.
 
 The Join Code is single-use and expires after 10 minutes by default. The display name defaults to the local hostname and can be renamed later by the Zone administrator.
 
@@ -122,6 +125,8 @@ ChatGPT
 ```
 
 Read-only capabilities that are permitted locally continue to work. Writes, shell commands, processes, or external MCP execution remain subject to the target device's normal LocalMCP policy.
+
+A Relay Administrator can use **Remote Unlock** for an online Zone member. The allowed durations are 5, 15, 30, or 60 minutes. This control action travels through the authenticated Relay Admin control plane and the existing Agent WebSocket; it is not an MCP tool and cannot be invoked with only the Zone MCP URL. The Agent verifies that the requested Zone matches its own membership before applying the remote lease. Local **Lock now** immediately overrides a remote unlock.
 
 ## Connector rotation
 

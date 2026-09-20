@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -11,7 +11,13 @@ server.setRequestHandler(ListToolsRequestSchema, async request => {
   return {tools:all.slice(offset, offset+1).map(name => ({name,description:'Fixture echo',inputSchema:schema,annotations:{readOnlyHint:true}})),...(offset+1<all.length?{nextCursor:String(offset+1)}:{})};
 });
 server.setRequestHandler(CallToolRequestSchema, async request => {
-  if(request.params.arguments?.text==='slow')await new Promise(resolve=>setTimeout(resolve,2500));
+  const text=request.params.arguments?.text;
+  if(typeof text==='string'&&text.startsWith('slow:')){
+    await writeFile(text.slice('slow:'.length),'started');
+    await new Promise(resolve=>setTimeout(resolve,2500));
+  }else if(text==='slow'){
+    await new Promise(resolve=>setTimeout(resolve,2500));
+  }
   if(request.params.arguments?.text==='saturate')await new Promise(resolve=>setTimeout(resolve,2500));
   // Deliberately no input validation here: the bridge must reject invalid arguments.
   return {content:[{type:'text',text:JSON.stringify(request.params.arguments)},{type:'image',mimeType:'image/png',data:'aGVsbG8='}],structuredContent:{tool:request.params.name},isError:request.params.arguments?.text==='fail'};

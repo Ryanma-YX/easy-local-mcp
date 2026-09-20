@@ -4,6 +4,11 @@ import { open, readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { config, configFilePath } from './config.js';
 import { auditFile, auditSecurity, secureWriteFileAtomic } from './security.js';
+import {
+  disableAlwaysUnlocked,
+  securityPolicyPreference,
+  updateSecurityPolicy
+} from './security-policy.js';
 import { control, maskMcpUrl, request, status } from './lifecycle.js';
 import { DEFAULT_PUBLIC_WORKER_URL, validatedWorkerOrigin } from './relay.js';
 import {
@@ -24,8 +29,9 @@ const MAX_BODY_BYTES=32*1024;
 const MAX_AUDIT_BYTES=256*1024;
 const SAFE_AUDIT_FIELDS=new Set([
   'timestamp','event','tool','workspace','result','durationMs','reason','error',
-  'deviceId','zoneId','publicRelay','pid','code','minutes','expiresAt','externalServer',
-  'externalTool','changed'
+  'deviceId','zoneId','publicRelay','pid','code','minutes','expiresAt','hardExpiresAt',
+  'source','actor','alwaysUnlocked','renewOnPrivilegedUse','idleMinutes','maxSessionMinutes',
+  'externalServer','externalTool','changed'
 ]);
 
 type FeatureState={
@@ -182,6 +188,7 @@ async function configView(){
     path
   });
   const configured=configuredFeatures(raw,normalized);
+  const security=await securityPolicyPreference();
 
   return {
     path,
@@ -199,7 +206,8 @@ async function configView(){
       shell:normalized.shell,
       processes:normalized.processes,
       externalMcp:normalized.externalMcp
-    }
+    },
+    security
   };
 }
 
@@ -245,6 +253,10 @@ async function statusView(){
       ready:current.ready,
       locked:current.locked,
       unlockExpiresAt:current.unlockExpiresAt,
+      unlockHardExpiresAt:current.unlockHardExpiresAt,
+      unlockSource:current.unlockSource,
+      unlockLastActivityAt:current.unlockLastActivityAt,
+      alwaysUnlocked:current.alwaysUnlocked,
       log:current.log
     },
     connection:{
@@ -505,6 +517,7 @@ async function joinZone(body:JsonObject){
   if(!code)throw new Error('Zone join code is required');
 
   const zoneId=code.split('.',1)[0]||'';
+  await disableAlwaysUnlocked('zone_join');
   await savePendingZoneJoinCode(code);
 
   const current=await status();
@@ -583,6 +596,48 @@ async function leaveZone(body:JsonObject){
     }
     throw error;
   }
+}
+
+async function setAlwaysUnlocked(body:JsonObject){
+  if(typeof body.enabled!=='boolean'){
+    throw new Error('enabled must be boolean');
+  }
+
+  const enabled=body.enabled;
+  const current=await status();
+  const registered=await registeredDeviceRecord();
+  const currentZoneId=current.zoneId??registered?.zoneId??null;
+
+  if(enabled){
+    if(currentZoneId){
+      throw new Error(
+        'Always Unlocked is not available while this device is a Zone member'
+      );
+    }
+    if(body.confirmRisk!==true){
+      throw new Error(
+        'Explicit risk confirmation is required for Always Unlocked'
+      );
+    }
+  }
+
+  await updateSecurityPolicy(
+    {alwaysUnlocked:enabled},
+    enabled?'always_unlock_enabled':'always_unlock_disabled'
+  );
+  await auditSecurity(
+    enabled?'always_unlock_enabled':'always_unlock_disabled',
+    {source:'local_control_ui'}
+  );
+
+  if(current.status==='running'){
+    await request('reload');
+    if(!enabled){
+      await request('lock');
+    }
+  }
+
+  return statusView();
 }
 
 function safeAuditValue(value:unknown){
@@ -722,7 +777,11 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
 <h2>Agent lifecycle</h2>
 <div class="row"><span class="label">Status</span><span id="agentStatus" class="value">-</span></div>
 <div class="row"><span class="label">PID</span><span id="pid" class="value">-</span></div>
-<div class="row"><span class="label">Unlock expires</span><span id="expiry" class="value">-</span></div>
+<div class="row"><span class="label">Unlock mode</span><span id="unlockMode" class="value">-</span></div>
+<div class="row"><span class="label">Idle expiry</span><span id="expiry" class="value">-</span></div>
+<div class="row"><span class="label">Hard limit</span><span id="hardExpiry" class="value">-</span></div>
+<div class="row"><span class="label">Last privileged activity</span><span id="unlockActivity" class="value">-</span></div>
+<div class="row"><span class="label">Time zone</span><span id="unlockTimezone" class="value">System local</span></div>
 <div class="row"><span class="label">Log</span><span id="logPath" class="path">-</span></div>
 <div class="actions">
   <button id="agentStart" class="primary">Start</button>
@@ -731,8 +790,21 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
   <button id="reload">Reload config</button>
 </div>
 <div class="actions">
-  <button data-minutes="5">Unlock 5m</button><button data-minutes="30">Unlock 30m</button><button data-minutes="60">Unlock 60m</button><button id="lock" class="danger">Lock now</button>
+  <button data-minutes="5">Unlock 5m</button>
+  <button data-minutes="15">Unlock 15m</button>
+  <button data-minutes="30">Unlock 30m</button>
+  <button data-minutes="60">Unlock 60m</button>
+  <button id="lock" class="danger">Lock now</button>
 </div>
+<div id="standaloneUnlockPolicy" style="margin-top:14px">
+  <div class="actions">
+    <button id="enableAlwaysUnlock" class="danger">Enable Always Unlocked</button>
+    <button id="disableAlwaysUnlock" class="danger" hidden>Lock & disable Always Unlocked</button>
+  </div>
+  <p class="muted">Standalone only. Timed unlock is recommended; successful privileged tool calls can renew the idle timeout up to the hard session limit.</p>
+</div>
+<div id="alwaysUnlockRisk" class="warning" hidden>ALWAYS UNLOCKED is active. Enabled privileged capabilities remain available while the Agent is running. Anyone who obtains this device MCP credential may use those capabilities without a separate unlock step.</div>
+<div id="zoneUnlockPolicy" class="warning" hidden>Zone member: permanent unlock is disabled. You can unlock locally for a limited time, and the Relay Administrator can remotely unlock this device for up to 60 minutes.</div>
 </section>
 
 <section class="card">
@@ -907,6 +979,29 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     if(!response.ok)throw new Error(data.error||('HTTP '+response.status));
     return data;
   };
+  const localTimeZone=
+    Intl.DateTimeFormat().resolvedOptions().timeZone||'System local';
+  const formatLocalTime=value=>{
+    if(!value)return '-';
+    const date=new Date(value);
+    if(Number.isNaN(date.getTime()))return String(value);
+    return date.toLocaleString(undefined,{
+      year:'numeric',
+      month:'2-digit',
+      day:'2-digit',
+      hour:'2-digit',
+      minute:'2-digit',
+      second:'2-digit',
+      timeZoneName:'short'
+    });
+  };
+  const setLocalTime=(id,value,fallback='-')=>{
+    const element=$(id);
+    element.textContent=value?formatLocalTime(value):fallback;
+    if(value)element.title=String(value);
+    else element.removeAttribute('title');
+  };
+
   const badge=(text,state)=>{
     const span=document.createElement('span');
     span.className='badge '+(state||'');
@@ -978,16 +1073,55 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
       ? 'Registration token is controlled by LOCALMCP_REGISTRATION_TOKEN.'
       : 'The registration token is stored only until registration succeeds, then deleted.';
 
-    $('agentStatus').textContent=data.agent.status+(data.agent.ready?' / ready':running?' / connecting':'');
-    $('pid').textContent=data.agent.pid??'-';
-    $('expiry').textContent=data.agent.unlockExpiresAt??'-';
-    $('logPath').textContent=data.agent.log??'-';
-    $('securityBadge').textContent=data.agent.locked?'LOCKED':'UNLOCKED';
-    $('securityBadge').className='badge '+(data.agent.locked?'warn':'ok');
+    const alwaysUnlocked=
+      !!data.agent.alwaysUnlocked
+      || (!running&&!zoneId&&!!data.configuration.security.alwaysUnlocked);
+    const unlockSource=data.agent.unlockSource||null;
 
-    $('summaryAgent').textContent=data.agent.ready?'Running / ready':running?'Running / connecting':'Stopped';
+    $('agentStatus').textContent=
+      data.agent.status+(data.agent.ready?' / ready':running?' / connecting':'');
+    $('pid').textContent=data.agent.pid??'-';
+    $('unlockMode').textContent=alwaysUnlocked
+      ? 'ALWAYS UNLOCKED'
+      : data.agent.locked
+        ? 'LOCKED'
+        : unlockSource==='remote'
+          ? 'REMOTE UNLOCKED'
+          : 'LOCAL TIMED';
+    setLocalTime(
+      'expiry',
+      data.agent.unlockExpiresAt,
+      alwaysUnlocked?'No expiry':'-'
+    );
+    setLocalTime(
+      'hardExpiry',
+      data.agent.unlockHardExpiresAt,
+      alwaysUnlocked?'No hard limit':'-'
+    );
+    setLocalTime('unlockActivity',data.agent.unlockLastActivityAt);
+    $('unlockTimezone').textContent=localTimeZone;
+    $('logPath').textContent=data.agent.log??'-';
+
+    $('securityBadge').textContent=alwaysUnlocked
+      ? 'ALWAYS UNLOCKED'
+      : data.agent.locked
+        ? 'LOCKED'
+        : unlockSource==='remote'
+          ? 'REMOTE UNLOCKED'
+          : 'UNLOCKED';
+    $('securityBadge').className=
+      'badge '+(alwaysUnlocked?'bad':data.agent.locked?'warn':'ok');
+
+    $('summaryAgent').textContent=
+      data.agent.ready?'Running / ready':running?'Running / connecting':'Stopped';
     $('summaryRelay').textContent=data.connection.state;
-    $('summarySecurity').textContent=data.agent.locked?'LOCKED':'UNLOCKED';
+    $('summarySecurity').textContent=alwaysUnlocked
+      ? 'ALWAYS UNLOCKED'
+      : data.agent.locked
+        ? 'LOCKED'
+        : unlockSource==='remote'
+          ? 'REMOTE UNLOCKED'
+          : 'UNLOCKED';
     $('summaryWorkspace').textContent=data.configuration.defaultWorkspace;
 
     $('relayState').textContent=data.connection.state;
@@ -1003,7 +1137,13 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     $('useDefaultWorker').disabled=workerManagedByEnv;
     $('workerHint').textContent=workerManagedByEnv
       ? 'Worker origin is controlled by LOCALMCP_WORKER_URL. Remove the environment override before changing it here.'
-      : (data.connection.publicRelay?'Using the public relay. It is trusted infrastructure, not end-to-end encrypted.':running?'Custom Worker origin. Re-registering replaces device credentials for this Agent.':'Relay changes are saved now and used the next time the Agent starts.');
+      : (
+          data.connection.publicRelay
+            ? 'Using the public relay. It is trusted infrastructure, not end-to-end encrypted.'
+            : running
+              ? 'Custom Worker origin. Re-registering replaces device credentials for this Agent.'
+              : 'Relay changes are saved now and used the next time the Agent starts.'
+        );
 
     $('zoneBadge').textContent=zoneId?'Joined':'Standalone';
     $('zoneBadge').className='badge '+(zoneId?'ok':'');
@@ -1016,14 +1156,22 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     $('agentStop').disabled=!running;
     $('agentRestart').disabled=!running;
     $('lock').disabled=!running;
-    document.querySelectorAll('button[data-minutes]').forEach(button=>button.disabled=!running);
+    $('standaloneUnlockPolicy').hidden=!!zoneId;
+    $('zoneUnlockPolicy').hidden=!zoneId;
+    $('alwaysUnlockRisk').hidden=!alwaysUnlocked;
+    $('enableAlwaysUnlock').hidden=alwaysUnlocked||!!zoneId;
+    $('disableAlwaysUnlock').hidden=!alwaysUnlocked||!!zoneId;
+    document.querySelectorAll('button[data-minutes]').forEach(button=>{
+      button.disabled=!running||alwaysUnlocked;
+    });
 
     setFeatures(data.configuration.features,data.capabilities);
-    currentWorkspaces=data.configuration.workspaces.map(item=>({name:item.name,root:item.root}));
+    currentWorkspaces=data.configuration.workspaces.map(
+      item=>({name:item.name,root:item.root})
+    );
     currentDefaultWorkspace=data.configuration.defaultWorkspace;
     renderWorkspaces();
     return data;
-
   };
   const eventCategory=event=>{
     const name=String(event.event||'').toLowerCase();
@@ -1050,7 +1198,12 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     const pageItems=filtered.slice(start,start+pageSize);
     for(const event of pageItems){
       const tr=document.createElement('tr');
-      const values=[event.timestamp||'-',event.event||'-',[event.tool,event.workspace].filter(Boolean).join(' / ')||'-',event.reason||event.result||event.error||event.durationMs||'-'];
+      const values=[
+        event.timestamp?formatLocalTime(event.timestamp):'-',
+        event.event||'-',
+        [event.tool,event.workspace].filter(Boolean).join(' / ')||'-',
+        event.reason||event.result||event.error||event.durationMs||'-'
+      ];
       for(const value of values){const td=document.createElement('td');td.textContent=String(value);tr.append(td);} body.append(tr);
     }
     if(!pageItems.length){
@@ -1133,6 +1286,15 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
       $('setupWorkerInput').focus();
       return;
     }
+    if(zoneJoinCode){
+      const approved=await askConfirmation({
+        title:'Join Zone and grant Relay Admin remote unlock?',
+        message:'Joining a Zone allows its Relay Administrator to route Zone MCP requests to this device, remotely unlock privileged capabilities for 5, 15, 30, or 60 minutes while the device is online, and revoke this device from the Zone. Permanent Always Unlocked is disabled for Zone members.',
+        confirmLabel:'Join Zone',
+        danger:true
+      });
+      if(!approved)return;
+    }
     await withOperation(zoneJoinCode?'Saving Relay and joining Zone…':'Saving Relay and starting Agent…',async()=>{
       try{
         await api('/api/relay/configure',{workerUrl,registrationToken,start:!zoneJoinCode,confirm:true});
@@ -1164,6 +1326,13 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
       $('zoneJoinCode').focus();
       return;
     }
+    const approved=await askConfirmation({
+      title:'Join Zone and grant Relay Admin remote unlock?',
+      message:'Joining a Zone allows its Relay Administrator to route Zone MCP requests to this device, remotely unlock privileged capabilities for 5, 15, 30, or 60 minutes while the device is online, and revoke this device from the Zone. Permanent Always Unlocked is disabled for Zone members.',
+      confirmLabel:'Join Zone',
+      danger:true
+    });
+    if(!approved)return;
     await withOperation('Joining Zone…',async()=>{
       await api('/api/zone/join',{code,confirm:true});
       $('zoneJoinCode').value='';
@@ -1193,7 +1362,38 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
       message('Left Zone. This device is now standalone on the same Relay.');
     });
   });
+  $('copyZoneId').addEventListener('click',()=>copyText($('zoneId').textContent,'Zone ID'));
   $('copyZoneDeviceId').addEventListener('click',()=>copyText($('zoneDeviceId').textContent,'Device ID'));
+
+  $('enableAlwaysUnlock').addEventListener('click',async()=>{
+    const approved=await askConfirmation({
+      title:'Enable Always Unlocked?',
+      message:'Always Unlocked disables the local LOCK safety boundary for this standalone device while the Agent is running. Anyone who obtains this device MCP credential may use enabled privileged capabilities such as file write, delete, shell, processes, and external MCP without another unlock step.',
+      confirmLabel:'I understand, enable Always Unlocked',
+      danger:true
+    });
+    if(!approved)return;
+
+    await withOperation('Enabling Always Unlocked…',async()=>{
+      await api('/api/security/always-unlocked',{
+        enabled:true,
+        confirmRisk:true
+      });
+      await load();
+      await loadAudit();
+      message('Always Unlocked enabled. This standalone device now has a higher security risk.');
+    });
+  });
+
+  $('disableAlwaysUnlock').addEventListener('click',async()=>{
+    await withOperation('Disabling Always Unlocked and locking…',async()=>{
+      await api('/api/security/always-unlocked',{enabled:false});
+      await load();
+      await loadAudit();
+      message('Always Unlocked disabled. Easy Local MCP is locked.');
+    });
+  });
+
   document.querySelectorAll('button[data-minutes]').forEach(button=>button.addEventListener('click',async()=>{
     const minutes=Number(button.dataset.minutes);
     await withOperation('Unlocking Easy Local MCP…',async()=>{
@@ -1453,6 +1653,11 @@ export async function startControlUi(options:ControlUiOptions={}):Promise<Contro
         return;
       }
 
+      if(target.pathname==='/api/security/always-unlocked'){
+        json(res,200,await setAlwaysUnlocked(await readJsonBody(req)));
+        return;
+      }
+
       if(target.pathname==='/api/zone/join'){
         json(res,200,await joinZone(await readJsonBody(req)));
         return;
@@ -1490,8 +1695,8 @@ export async function startControlUi(options:ControlUiOptions={}):Promise<Contro
       if(target.pathname==='/api/unlock'){
         const body=await readJsonBody(req);
         const minutes=Number(body.minutes);
-        if(![5,30,60].includes(minutes)){
-          throw new Error('UI unlock duration must be 5, 30, or 60 minutes');
+        if(![5,15,30,60].includes(minutes)){
+          throw new Error('UI unlock duration must be 5, 15, 30, or 60 minutes');
         }
         await request('unlock',{minutes});
         json(res,200,await statusView());
