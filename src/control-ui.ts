@@ -681,7 +681,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
 .cap-name{font-weight:700}.cap-note{display:block;font-size:11px;color:#7b8697;margin-top:2px}.workspace-actions{display:flex;gap:6px;align-items:center}.connection-editor{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:12px}
 .audit-tools{display:grid;grid-template-columns:180px 1fr auto auto;gap:8px;align-items:center;margin-bottom:10px}.pager{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap}.pager-controls{display:flex;gap:8px;align-items:center}
 #revealed{margin-top:9px;font:12px ui-monospace,SFMono-Regular,Consolas,monospace}#message{position:fixed;right:20px;bottom:20px;max-width:460px;padding:11px 14px;background:#172b4d;color:#fff;border-radius:10px;display:none;white-space:pre-wrap;z-index:30;box-shadow:0 10px 30px rgba(16,24,40,.22)}
-#operationOverlay{position:fixed;inset:0;z-index:20;background:rgba(15,23,42,.28);backdrop-filter:blur(1.5px);display:flex;align-items:center;justify-content:center}#operationOverlay[hidden]{display:none}.operation-panel{min-width:230px;max-width:80vw;padding:18px 22px;background:#fff;border:1px solid #d8dee8;border-radius:14px;box-shadow:0 18px 50px rgba(15,23,42,.22);display:flex;align-items:center;gap:13px;font-weight:700;color:#27364b}.operation-spinner{width:22px;height:22px;border:3px solid #dbe2ea;border-top-color:#172b4d;border-radius:50%;animation:operation-spin .8s linear infinite;flex:0 0 auto}@keyframes operation-spin{to{transform:rotate(360deg)}}
+#operationOverlay{position:fixed;inset:0;z-index:20;background:rgba(15,23,42,.28);backdrop-filter:blur(1.5px);display:flex;align-items:center;justify-content:center}#operationOverlay[hidden]{display:none}.operation-panel{min-width:230px;max-width:80vw;padding:18px 22px;background:#fff;border:1px solid #d8dee8;border-radius:14px;box-shadow:0 18px 50px rgba(15,23,42,.22);display:flex;align-items:center;gap:13px;font-weight:700;color:#27364b}.operation-spinner{width:22px;height:22px;border:3px solid #dbe2ea;border-top-color:#172b4d;border-radius:50%;animation:operation-spin .8s linear infinite;flex:0 0 auto}@keyframes operation-spin{to{transform:rotate(360deg)}}#confirmOverlay{position:fixed;inset:0;z-index:25;background:rgba(15,23,42,.38);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;padding:20px}#confirmOverlay[hidden]{display:none}.confirm-panel{width:min(520px,100%);background:#fff;border:1px solid #d8dee8;border-radius:14px;box-shadow:0 18px 50px rgba(15,23,42,.28);padding:20px}.confirm-panel h2{margin-bottom:8px}.confirm-message{white-space:pre-wrap;color:#475467}.confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
 @media(max-width:900px){.summary{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.wide{grid-column:auto}}
 @media(max-width:600px){.shell{padding:18px 10px 40px}.summary{grid-template-columns:1fr 1fr}header{display:block}.audit-tools{grid-template-columns:1fr}.connection-editor{grid-template-columns:1fr}.card{padding:14px}}
 </style>
@@ -812,6 +812,16 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
 </div>
 <div id="message" role="status" aria-live="polite"></div>
 <div id="operationOverlay" hidden aria-live="polite" aria-busy="true"><div class="operation-panel"><span class="operation-spinner" aria-hidden="true"></span><span id="operationText">Processing…</span></div></div>
+<div id="confirmOverlay" hidden role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+  <div class="confirm-panel">
+    <h2 id="confirmTitle">Confirm action</h2>
+    <p id="confirmMessage" class="confirm-message">Continue?</p>
+    <div class="confirm-actions">
+      <button id="confirmCancel">Cancel</button>
+      <button id="confirmProceed" class="primary">Continue</button>
+    </div>
+  </div>
+</div>
 <script>
 (() => {
   let currentFeatures=null;
@@ -833,6 +843,38 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     message.timer=setTimeout(()=>node.style.display='none',4500);
   };
   let operationActive=false;
+  let confirmationResolver=null;
+  const finishConfirmation=value=>{
+    if(!confirmationResolver)return;
+    const resolve=confirmationResolver;
+    confirmationResolver=null;
+    $('confirmOverlay').hidden=true;
+    resolve(value);
+  };
+  const askConfirmation=options=>new Promise(resolve=>{
+    if(confirmationResolver){
+      const previous=confirmationResolver;
+      confirmationResolver=null;
+      previous(false);
+    }
+    confirmationResolver=resolve;
+    $('confirmTitle').textContent=options?.title||'Confirm action';
+    $('confirmMessage').textContent=options?.message||'Continue?';
+    const proceed=$('confirmProceed');
+    proceed.textContent=options?.confirmLabel||'Continue';
+    proceed.className=options?.danger?'danger':'primary';
+    $('confirmOverlay').hidden=false;
+    setTimeout(()=>proceed.focus(),0);
+  });
+  $('confirmCancel').addEventListener('click',()=>finishConfirmation(false));
+  $('confirmProceed').addEventListener('click',()=>finishConfirmation(true));
+  $('confirmOverlay').addEventListener('click',event=>{
+    if(event.target===$('confirmOverlay'))finishConfirmation(false);
+  });
+  document.addEventListener('keydown',event=>{
+    if(event.key==='Escape'&&!$('confirmOverlay').hidden)finishConfirmation(false);
+  });
+
   const withOperation=async(label,task)=>{
     if(operationActive)return;
     operationActive=true;
@@ -1062,6 +1104,15 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     if(data.connection.onboardingComplete)await loadAudit();
   };
   const agentAction=async(action)=>{
+    if(action==='stop'||action==='restart'){
+      const approved=await askConfirmation({
+        title:action==='stop'?'Stop Agent?':'Restart Agent?',
+        message:'Active MCP connections may be interrupted.',
+        confirmLabel:action==='stop'?'Stop Agent':'Restart Agent',
+        danger:action==='stop'
+      });
+      if(!approved)return;
+    }
     const labels={start:'Starting Agent…',stop:'Stopping Agent…',restart:'Restarting Agent…'};
     await withOperation(labels[action]||'Updating Agent…',async()=>{
       await api('/api/agent/'+action,{confirm:true});
@@ -1069,7 +1120,6 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
       message('Agent '+action+' completed.');
     });
   };
-  $('setupUseDefault').addEventListener('click',()=>{$('setupWorkerInput').value=DEFAULT_WORKER;});
   $('setupStart').addEventListener('click',async()=>{
     if(workerManagedByEnv){
       message('Relay origin is controlled by LOCALMCP_WORKER_URL. Remove that environment override before changing it here.',true);
@@ -1126,6 +1176,13 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     });
   });
   $('leaveZone').addEventListener('click',async()=>{
+    const approved=await askConfirmation({
+      title:'Leave Zone?',
+      message:'This device will be removed from the Zone, its current Zone-era credentials will be invalidated, and it will restart as a standalone device on the same Relay.',
+      confirmLabel:'Leave Zone',
+      danger:true
+    });
+    if(!approved)return;
     await withOperation('Leaving Zone…',async()=>{
       await api('/api/zone/leave',{confirm:true});
       await waitForState(
@@ -1136,7 +1193,6 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
       message('Left Zone. This device is now standalone on the same Relay.');
     });
   });
-  $('copyZoneId').addEventListener('click',()=>copyText($('zoneId').textContent,'Zone ID'));
   $('copyZoneDeviceId').addEventListener('click',()=>copyText($('zoneDeviceId').textContent,'Device ID'));
   document.querySelectorAll('button[data-minutes]').forEach(button=>button.addEventListener('click',async()=>{
     const minutes=Number(button.dataset.minutes);
@@ -1161,7 +1217,13 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     });
   });
   $('rotate').addEventListener('click',async()=>{
-    if(!confirm('Rotate Easy Local MCP credentials? Existing connections may be interrupted.'))return;
+    const approved=await askConfirmation({
+      title:'Rotate credentials?',
+      message:'Existing MCP connections may be interrupted and the previous direct MCP URL will stop working.',
+      confirmLabel:'Rotate credentials',
+      danger:true
+    });
+    if(!approved)return;
     await withOperation('Rotating credentials…',async()=>{
       await api('/api/rotate',{confirm:true});
       await load();
@@ -1169,28 +1231,42 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     });
   });
   $('reveal').addEventListener('click',async()=>{
-    if(!confirm('The full MCP URL is a credential. Reveal and copy it locally?'))return;
+    const approved=await askConfirmation({
+      title:'Reveal MCP URL?',
+      message:'The full MCP URL is a credential. Anyone who has it can use this device connector until the credential is rotated.',
+      confirmLabel:'Reveal and copy'
+    });
+    if(!approved)return;
     await withOperation('Revealing MCP URL…',async()=>{
       const data=await api('/api/reveal-url',{confirm:true});
       const input=$('revealed');
       input.hidden=false;
       input.value=data.url;
-      try{
-        await navigator.clipboard.writeText(data.url);
-        message('MCP URL revealed and copied.');
-      }catch{
-        message('MCP URL revealed. Clipboard access was unavailable.');
-      }
+      await copyText(data.url,'MCP URL');
     });
   });
   $('useDefaultWorker').addEventListener('click',()=>{$('workerInput').value=DEFAULT_WORKER;});
   $('reregisterWorker').addEventListener('click',async()=>{
-    if(workerManagedByEnv)return;
+    if(workerManagedByEnv){
+      message('Worker origin is controlled by LOCALMCP_WORKER_URL.',true);
+      return;
+    }
     const workerUrl=$('workerInput').value.trim();
     const registrationToken=registrationTokenManagedByEnv?undefined:$('workerTokenInput').value;
     const running=$('agentStatus').textContent.startsWith('running');
+    if(!workerUrl){
+      message('Enter a Relay URL first.',true);
+      $('workerInput').focus();
+      return;
+    }
     if(running){
-      if(!confirm('Re-register this Easy Local MCP device with '+workerUrl+'? Local credentials will switch to the new Worker. The previous Worker registration may remain valid until it is revoked or rotated there.'))return;
+      const approved=await askConfirmation({
+        title:'Re-register Worker?',
+        message:'This device will switch to '+workerUrl+'. Active connections may be interrupted. The previous Worker registration may remain valid until revoked or rotated there.',
+        confirmLabel:'Re-register',
+        danger:true
+      });
+      if(!approved)return;
       await withOperation('Re-registering Worker…',async()=>{
         await api('/api/worker/reregister',{workerUrl,registrationToken,confirm:true});
         $('workerTokenInput').value='';
@@ -1198,7 +1274,6 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
         message('Worker re-registration completed.');
       });
     }else{
-      if(!confirm('Save this Relay for the next Agent start?\n\n'+workerUrl))return;
       await withOperation('Saving Relay…',async()=>{
         await api('/api/relay/configure',{workerUrl,registrationToken,start:false,confirm:true});
         $('workerTokenInput').value='';
@@ -1207,25 +1282,50 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
       });
     }
   });
-  document.querySelector('input[data-key="processes"]').addEventListener('change',event=>{if(event.target.checked)document.querySelector('input[data-key="shell"]').checked=true;});
-  document.querySelector('input[data-key="shell"]').addEventListener('change',event=>{if(!event.target.checked)document.querySelector('input[data-key="processes"]').checked=false;});
+  document.querySelector('input[data-key="processes"]').addEventListener('change',event=>{
+    if(event.target.checked)document.querySelector('input[data-key="shell"]').checked=true;
+  });
+  document.querySelector('input[data-key="shell"]').addEventListener('change',event=>{
+    if(!event.target.checked)document.querySelector('input[data-key="processes"]').checked=false;
+  });
   $('saveConfig').addEventListener('click',async()=>{
-    const features={};document.querySelectorAll('#capabilityRows input[data-key]').forEach(input=>{features[input.dataset.key]=input.checked;});
+    const features={};
+    document.querySelectorAll('#capabilityRows input[data-key]').forEach(input=>{
+      features[input.dataset.key]=input.checked;
+    });
     const dangerous=['fileWrite','fileDelete','shell','processes','externalMcp'];
     const enabling=dangerous.filter(key=>!currentFeatures?.[key]&&features[key]);
     let confirmDangerous=false;
-    if(enabling.length){confirmDangerous=confirm('Enable privileged capabilities: '+enabling.join(', ')+'?\n\nThese capabilities grant additional authority while Easy Local MCP is unlocked.');if(!confirmDangerous)return;}
+    if(enabling.length){
+      confirmDangerous=await askConfirmation({
+        title:'Enable privileged capabilities?',
+        message:'You are enabling: '+enabling.join(', ')+'.\n\nThese capabilities grant additional authority while Easy Local MCP is unlocked.',
+        confirmLabel:'Enable and save',
+        danger:true
+      });
+      if(!confirmDangerous)return;
+    }
     await withOperation('Saving permission profile…',async()=>{
       await api('/api/config/update',{features,confirmDangerous});
       await load();
       message('Permission profile saved.');
     });
   });
-  $('addWorkspace').addEventListener('click',()=>{let i=1;let name='workspace'+i;const names=new Set(currentWorkspaces.map(item=>item.name));while(names.has(name))name='workspace'+(++i);currentWorkspaces.push({name,root:''});renderWorkspaces();});
+  $('addWorkspace').addEventListener('click',()=>{
+    let i=1;
+    let name='workspace'+i;
+    const names=new Set(currentWorkspaces.map(item=>item.name));
+    while(names.has(name))name='workspace'+(++i);
+    currentWorkspaces.push({name,root:''});
+    renderWorkspaces();
+  });
   $('saveWorkspaces').addEventListener('click',async()=>{
-    if(!confirm('Save workspace changes? This changes the Easy Local MCP file-access boundary.'))return;
     await withOperation('Saving workspaces…',async()=>{
-      await api('/api/workspaces/update',{workspaces:currentWorkspaces,defaultWorkspace:currentDefaultWorkspace,confirm:true});
+      await api('/api/workspaces/update',{
+        workspaces:currentWorkspaces,
+        defaultWorkspace:currentDefaultWorkspace,
+        confirm:true
+      });
       await load();
       message('Workspaces saved.');
     });

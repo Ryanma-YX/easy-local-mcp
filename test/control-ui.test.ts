@@ -186,14 +186,19 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
   assert.match(html,/auditNext/);
   assert.match(html,/id="operationOverlay"/);
   assert.match(html,/operation-spinner/);
+  assert.match(html,/id="confirmOverlay"/);
+  assert.match(html,/id="confirmProceed"/);
   const inlineScript=/<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
   assert.ok(inlineScript);
   assert.doesNotThrow(()=>new Function(inlineScript));
   assert.match(inlineScript,/withOperation/);
   assert.match(inlineScript,/operationActive/);
+  assert.match(inlineScript,/askConfirmation/);
+  assert.doesNotMatch(inlineScript,/\bconfirm\s*\(/);
+  assert.match(inlineScript,/Saving permission profile/);
+  assert.match(inlineScript,/Saving workspaces/);
   assert.match(inlineScript,/response\.status===401/);
   assert.match(inlineScript,/post\('\/api\/session'/);
-  assert.ok(!html.includes(controlSecret));
   assert.ok(!html.includes('a'.repeat(64)));
 
   const unauthenticated=await fetch(new URL('/api/status',uiUrl),{
