@@ -7,8 +7,13 @@ import { auditFile, auditSecurity, secureWriteFileAtomic } from './security.js';
 import { control, maskMcpUrl, request, status } from './lifecycle.js';
 import { DEFAULT_PUBLIC_WORKER_URL, validatedWorkerOrigin } from './relay.js';
 import {
+  clearPendingZoneJoinCode,
+  clearRegisteredDevice,
+  registeredDeviceRecord,
   relaySetupState,
   savePendingRegistrationToken,
+  savePendingZoneJoinCode,
+  saveRegisteredDevice,
   saveRelayPreference
 } from './relay-config.js';
 
@@ -19,7 +24,7 @@ const MAX_BODY_BYTES=32*1024;
 const MAX_AUDIT_BYTES=256*1024;
 const SAFE_AUDIT_FIELDS=new Set([
   'timestamp','event','tool','workspace','result','durationMs','reason','error',
-  'deviceId','publicRelay','pid','code','minutes','expiresAt','externalServer',
+  'deviceId','zoneId','publicRelay','pid','code','minutes','expiresAt','externalServer',
   'externalTool','changed'
 ]);
 
@@ -214,6 +219,7 @@ function capabilityAvailability(enabled:boolean,privileged:boolean,current:Await
 async function statusView(){
   const current=await status();
   const relay=await relaySetupState();
+  const registered=await registeredDeviceRecord();
   const configuration=await configView();
   const effective=configuration.effectiveFeatures;
   const capabilityMeta:{key:keyof FeatureState;privileged:boolean}[]=[
@@ -228,6 +234,9 @@ async function statusView(){
   const relayConfigured=current.status==='running'||relay.configured;
   const configuredWorkerUrl=activeWorkerUrl??relay.workerUrl;
   const suggestedWorkerUrl=configuredWorkerUrl??relay.suggestedWorkerUrl;
+  const onboardingComplete=current.status==='running'||registered!==null;
+  const deviceId=current.deviceId??registered?.deviceId??null;
+  const zoneId=current.zoneId??registered?.zoneId??null;
 
   return {
     agent:{
@@ -241,11 +250,13 @@ async function statusView(){
     connection:{
       state:current.status==='running'?(current.ready?'connected':'connecting'):'stopped',
       configured:relayConfigured,
-      needsSetup:!relayConfigured,
+      onboardingComplete,
+      needsSetup:!onboardingComplete,
       workerUrl:configuredWorkerUrl,
       suggestedWorkerUrl,
       relaySource:relay.source,
-      deviceId:current.deviceId,
+      deviceId,
+      zoneId,
       workerManagedByEnv:relay.managedByEnv||current.workerManagedByEnv,
       registrationTokenManagedByEnv:relay.registrationTokenManagedByEnv,
       publicRelay:suggestedWorkerUrl===validatedWorkerOrigin(DEFAULT_PUBLIC_WORKER_URL).href,
@@ -465,6 +476,115 @@ async function configureRelay(body:JsonObject){
   return savedWorkerUrl;
 }
 
+async function unregisterRegisteredDevice(){
+  const registered=await registeredDeviceRecord();
+  if(!registered?.deviceId)return;
+
+  const response=await fetch(
+    new URL('/unregister/'+encodeURIComponent(registered.deviceId),registered.workerUrl),
+    {
+      method:'POST',
+      headers:{
+        'Authorization':'Bearer '+registered.agentToken,
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify({zoneId:registered.zoneId})
+    }
+  );
+
+  if(!response.ok&&response.status!==404){
+    throw new Error(
+      'Unable to retire the previous Relay registration ('+response.status+').'
+    );
+  }
+}
+
+async function joinZone(body:JsonObject){
+  if(body.confirm!==true)throw new Error('Zone join requires explicit confirmation');
+  const code=typeof body.code==='string'?body.code.trim():'';
+  if(!code)throw new Error('Zone join code is required');
+
+  const zoneId=code.split('.',1)[0]||'';
+  await savePendingZoneJoinCode(code);
+
+  const current=await status();
+  if(current.status==='running')await control('stop');
+
+  try{
+    await unregisterRegisteredDevice();
+    await clearRegisteredDevice();
+    await control('start');
+    await auditSecurity('zone_join_staged',{zoneId});
+    return statusView();
+  }catch(error){
+    if(current.status==='running'){
+      await control('start').catch(()=>{});
+    }
+    throw error;
+  }
+}
+
+async function leaveZone(body:JsonObject){
+  if(body.confirm!==true)throw new Error('Leaving a Zone requires explicit confirmation');
+
+  const registered=await registeredDeviceRecord();
+  if(!registered?.zoneId||!registered.deviceId){
+    throw new Error('This device is not currently joined to a Zone');
+  }
+
+  const current=await status();
+  if(current.status==='running')await control('stop');
+
+  try{
+    const response=await fetch(
+      new URL(
+        '/leave/'+encodeURIComponent(registered.zoneId)+'/'+encodeURIComponent(registered.deviceId),
+        registered.workerUrl
+      ),
+      {
+        method:'POST',
+        headers:{
+          'Authorization':'Bearer '+registered.agentToken
+        }
+      }
+    );
+
+    const value=await response.json().catch(()=>({})) as Record<string,unknown>;
+    if(!response.ok){
+      throw new Error(
+        typeof value.error==='string'
+          ? value.error
+          : 'Unable to leave Zone ('+response.status+'). Update the Relay if it does not support this operation.'
+      );
+    }
+
+    const workerUrl=typeof value.workerUrl==='string'?value.workerUrl:'';
+    const agentToken=typeof value.agentToken==='string'?value.agentToken:'';
+    const mcpToken=typeof value.mcpToken==='string'?value.mcpToken:'';
+    const deviceId=typeof value.deviceId==='string'?value.deviceId:'';
+
+    if(!workerUrl||!agentToken||!mcpToken||!deviceId){
+      throw new Error('Relay returned incomplete standalone device credentials');
+    }
+
+    await saveRegisteredDevice({
+      workerUrl,
+      agentToken,
+      mcpToken,
+      deviceId
+    });
+    await clearPendingZoneJoinCode();
+    await control('start');
+    await auditSecurity('zone_leave',{zoneId:registered.zoneId,deviceId});
+    return statusView();
+  }catch(error){
+    if(current.status==='running'){
+      await control('start').catch(()=>{});
+    }
+    throw error;
+  }
+}
+
 function safeAuditValue(value:unknown){
   if(value===null||typeof value==='number'||typeof value==='boolean')return value;
   if(typeof value!=='string')return undefined;
@@ -546,13 +666,13 @@ const PAGE=String.raw`<!doctype html>
 <title>Easy Local MCP Control Center</title>
 <style>
 :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#182230;background:#f4f6f9}
-*{box-sizing:border-box}body{margin:0;background:#f4f6f9}.shell{max-width:1240px;margin:0 auto;padding:26px 20px 52px}
+*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:#f4f6f9}.shell{max-width:1240px;margin:0 auto;padding:26px 20px 52px}
 header{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:20px}h1{font-size:28px;margin:0}h2{font-size:17px;margin:0 0 14px}p{margin:.45rem 0;color:#667085}
 .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}.metric,.card{background:#fff;border:1px solid #e1e6ee;border-radius:14px;box-shadow:0 4px 14px rgba(16,24,40,.04)}
 .metric{padding:14px 16px}.metric-label{font-size:12px;color:#667085}.metric-value{margin-top:5px;font-size:17px;font-weight:750;word-break:break-word}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.card{padding:18px}.wide{grid-column:1/-1}
 .row{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid #edf0f4}.row:last-child{border-bottom:0}.label{color:#667085}.value{font-weight:650;text-align:right;word-break:break-all}
-.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}#securityBadge{align-items:center;justify-content:center;align-self:center;line-height:1}button{border:1px solid #cfd6e2;background:#fff;border-radius:9px;padding:8px 12px;font-weight:650;cursor:pointer;color:#27364b}button.primary{background:#172b4d;border-color:#172b4d;color:#fff}button.danger{border-color:#f0a3a3;color:#b42318}button:disabled{opacity:.45;cursor:not-allowed}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}#securityBadge{align-items:center;justify-content:center;align-self:center;line-height:1}button{border:1px solid #cfd6e2;background:#fff;border-radius:9px;padding:8px 12px;font-weight:650;cursor:pointer;color:#27364b}button.primary{background:#172b4d;border-color:#172b4d;color:#fff}button.danger{border-color:#f0a3a3;color:#b42318}button:disabled{opacity:.45;cursor:not-allowed}
 .badge{display:inline-flex;padding:4px 8px;border-radius:999px;background:#eef2f6;font-size:12px;font-weight:750}.badge.ok{background:#e9f8ef;color:#067647}.badge.warn{background:#fff4e5;color:#b54708}.badge.bad{background:#feecec;color:#b42318}
 .muted{font-size:12px;color:#7b8697}.path{font:12px ui-monospace,SFMono-Regular,Consolas,monospace;color:#475467;word-break:break-all}
 .warning{margin-top:12px;padding:11px 12px;border-radius:10px;background:#fff4e5;color:#7a4b00;font-size:13px;font-weight:600}
@@ -561,7 +681,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
 .cap-name{font-weight:700}.cap-note{display:block;font-size:11px;color:#7b8697;margin-top:2px}.workspace-actions{display:flex;gap:6px;align-items:center}.connection-editor{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:12px}
 .audit-tools{display:grid;grid-template-columns:180px 1fr auto auto;gap:8px;align-items:center;margin-bottom:10px}.pager{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap}.pager-controls{display:flex;gap:8px;align-items:center}
 #revealed{margin-top:9px;font:12px ui-monospace,SFMono-Regular,Consolas,monospace}#message{position:fixed;right:20px;bottom:20px;max-width:460px;padding:11px 14px;background:#172b4d;color:#fff;border-radius:10px;display:none;white-space:pre-wrap;z-index:30;box-shadow:0 10px 30px rgba(16,24,40,.22)}
-#operationOverlay{position:fixed;inset:0;z-index:20;background:rgba(15,23,42,.28);backdrop-filter:blur(1.5px);display:flex;align-items:center;justify-content:center}#operationOverlay[hidden]{display:none}.operation-panel{min-width:230px;max-width:80vw;padding:18px 22px;background:#fff;border:1px solid #d8dee8;border-radius:14px;box-shadow:0 18px 50px rgba(15,23,42,.22);display:flex;align-items:center;gap:13px;font-weight:700;color:#27364b}.operation-spinner{width:22px;height:22px;border:3px solid #dbe2ea;border-top-color:#172b4d;border-radius:50%;animation:operation-spin .8s linear infinite;flex:0 0 auto}@keyframes operation-spin{to{transform:rotate(360deg)}}
+#operationOverlay{position:fixed;inset:0;z-index:20;background:rgba(15,23,42,.28);backdrop-filter:blur(1.5px);display:flex;align-items:center;justify-content:center}#operationOverlay[hidden]{display:none}.operation-panel{min-width:230px;max-width:80vw;padding:18px 22px;background:#fff;border:1px solid #d8dee8;border-radius:14px;box-shadow:0 18px 50px rgba(15,23,42,.22);display:flex;align-items:center;gap:13px;font-weight:700;color:#27364b}.operation-spinner{width:22px;height:22px;border:3px solid #dbe2ea;border-top-color:#172b4d;border-radius:50%;animation:operation-spin .8s linear infinite;flex:0 0 auto}@keyframes operation-spin{to{transform:rotate(360deg)}}#confirmOverlay{position:fixed;inset:0;z-index:25;background:rgba(15,23,42,.38);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;padding:20px}#confirmOverlay[hidden]{display:none}.confirm-panel{width:min(520px,100%);background:#fff;border:1px solid #d8dee8;border-radius:14px;box-shadow:0 18px 50px rgba(15,23,42,.28);padding:20px}.confirm-panel h2{margin-bottom:8px}.confirm-message{white-space:pre-wrap;color:#475467}.confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
 @media(max-width:900px){.summary{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.wide{grid-column:auto}}
 @media(max-width:600px){.shell{padding:18px 10px 40px}.summary{grid-template-columns:1fr 1fr}header{display:block}.audit-tools{grid-template-columns:1fr}.connection-editor{grid-template-columns:1fr}.card{padding:14px}}
 </style>
@@ -573,24 +693,31 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
   <div class="header-actions"><button id="refreshStatus">Refresh</button><span id="securityBadge" class="badge">Connecting…</span></div>
 </header>
 
+<section id="loadingState" class="card wide" style="margin-bottom:16px">
+<h2>Loading Easy Local MCP…</h2>
+<p>Checking the local Agent, Relay, security state, and device registration.</p>
+</section>
+
 <section id="firstRunSetup" class="card wide" hidden style="margin-bottom:16px">
-<h2>Choose a Relay before starting Easy Local MCP</h2>
-<p>The Agent will not start until you explicitly save a Relay. The public Relay is prefilled for convenience, but it is not contacted until you confirm.</p>
+<h2 id="setupTitle">Choose a Relay before starting Easy Local MCP</h2>
+<p id="setupDescription">The Agent will not start until you explicitly save a Relay. The public Relay is prefilled for convenience, but it is not contacted until you confirm.</p>
 <div class="connection-editor"><input id="setupWorkerInput" type="text" aria-label="Relay origin" placeholder="https://worker.example.com"><button id="setupUseDefault">Use public relay</button></div>
 <div style="margin-top:8px"><input id="setupTokenInput" type="password" aria-label="Registration token" placeholder="Registration token (optional for protected custom Relay)"></div>
 <p id="setupTokenHint" class="muted">The registration token is stored only until registration succeeds, then deleted.</p>
+<div style="margin-top:12px"><label class="muted" for="setupZoneJoinCode">Zone Join Code (optional)</label><input id="setupZoneJoinCode" type="text" autocomplete="off" aria-label="Zone Join Code" placeholder="Paste a one-time Join Code to join a Zone on first start"></div>
+<p class="muted">Leave this blank to register this device as standalone. A Join Code is single-use and must belong to this Relay.</p>
 <div class="warning">The public Relay is shared trusted infrastructure and is not end-to-end encrypted. For company source code, internal systems, or sensitive data, use a self-hosted Relay.</div>
 <div class="actions"><button id="setupStart" class="primary">Save & Start Agent</button></div>
 </section>
 
-<div class="summary">
+<div class="summary" hidden>
   <div class="metric"><div class="metric-label">Agent</div><div id="summaryAgent" class="metric-value">-</div></div>
   <div class="metric"><div class="metric-label">Relay</div><div id="summaryRelay" class="metric-value">-</div></div>
   <div class="metric"><div class="metric-label">Security</div><div id="summarySecurity" class="metric-value">-</div></div>
   <div class="metric"><div class="metric-label">Default workspace</div><div id="summaryWorkspace" class="metric-value">-</div></div>
 </div>
 
-<div class="grid">
+<div class="grid" hidden>
 <section class="card">
 <h2>Agent lifecycle</h2>
 <div class="row"><span class="label">Status</span><span id="agentStatus" class="value">-</span></div>
@@ -619,6 +746,30 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
 <p id="workerHint" class="muted">Changing Worker re-registers this device. Registration credentials remain inside the Agent.</p>
 <div class="actions"><button id="reregisterWorker">Re-register Worker</button><button id="reveal">Reveal / Copy MCP URL</button><button id="rotate" class="danger">Rotate credentials</button></div>
 <input id="revealed" type="text" readonly hidden aria-label="Revealed MCP URL">
+</section>
+
+<section class="card wide" id="zoneCard">
+<div class="topbar">
+  <div>
+    <h2>Zone membership</h2>
+    <p class="muted">Join multiple devices under one Relay so one Zone MCP connector can route requests to them.</p>
+  </div>
+  <span id="zoneBadge" class="badge">Standalone</span>
+</div>
+
+<div id="zoneStandalone">
+  <p>This device is currently standalone. Paste a one-time Join Code created by the Relay Admin to add it to a Zone.</p>
+  <div class="connection-editor"><input id="zoneJoinCode" type="text" autocomplete="off" aria-label="Zone Join Code" placeholder="Paste Zone Join Code"><button id="joinZone" class="primary">Join Zone</button></div>
+  <p class="muted">Joining automatically stops the Agent, retires the previous Relay registration, joins the Zone, then starts the Agent again.</p>
+</div>
+
+<div id="zoneJoined" hidden>
+  <div class="row"><span class="label">Zone ID</span><span class="value"><span id="zoneId">-</span> <button id="copyZoneId">Copy</button></span></div>
+  <div class="row"><span class="label">Device ID</span><span class="value"><span id="zoneDeviceId">-</span> <button id="copyZoneDeviceId">Copy</button></span></div>
+  <p class="muted">The shared Zone MCP connector is managed by the Relay Admin. This device stores only its own Agent and direct MCP credentials.</p>
+  <div class="actions"><button id="leaveZone" class="danger">Leave Zone</button></div>
+  <div class="warning">Leaving removes this device from the Zone, rotates it back to standalone credentials on the same Relay, and restarts the Agent.</div>
+</div>
 </section>
 
 <section class="card wide">
@@ -661,6 +812,16 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
 </div>
 <div id="message" role="status" aria-live="polite"></div>
 <div id="operationOverlay" hidden aria-live="polite" aria-busy="true"><div class="operation-panel"><span class="operation-spinner" aria-hidden="true"></span><span id="operationText">Processing…</span></div></div>
+<div id="confirmOverlay" hidden role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+  <div class="confirm-panel">
+    <h2 id="confirmTitle">Confirm action</h2>
+    <p id="confirmMessage" class="confirm-message">Continue?</p>
+    <div class="confirm-actions">
+      <button id="confirmCancel">Cancel</button>
+      <button id="confirmProceed" class="primary">Continue</button>
+    </div>
+  </div>
+</div>
 <script>
 (() => {
   let currentFeatures=null;
@@ -682,6 +843,38 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     message.timer=setTimeout(()=>node.style.display='none',4500);
   };
   let operationActive=false;
+  let confirmationResolver=null;
+  const finishConfirmation=value=>{
+    if(!confirmationResolver)return;
+    const resolve=confirmationResolver;
+    confirmationResolver=null;
+    $('confirmOverlay').hidden=true;
+    resolve(value);
+  };
+  const askConfirmation=options=>new Promise(resolve=>{
+    if(confirmationResolver){
+      const previous=confirmationResolver;
+      confirmationResolver=null;
+      previous(false);
+    }
+    confirmationResolver=resolve;
+    $('confirmTitle').textContent=options?.title||'Confirm action';
+    $('confirmMessage').textContent=options?.message||'Continue?';
+    const proceed=$('confirmProceed');
+    proceed.textContent=options?.confirmLabel||'Continue';
+    proceed.className=options?.danger?'danger':'primary';
+    $('confirmOverlay').hidden=false;
+    setTimeout(()=>proceed.focus(),0);
+  });
+  $('confirmCancel').addEventListener('click',()=>finishConfirmation(false));
+  $('confirmProceed').addEventListener('click',()=>finishConfirmation(true));
+  $('confirmOverlay').addEventListener('click',event=>{
+    if(event.target===$('confirmOverlay'))finishConfirmation(false);
+  });
+  document.addEventListener('keydown',event=>{
+    if(event.key==='Escape'&&!$('confirmOverlay').hidden)finishConfirmation(false);
+  });
+
   const withOperation=async(label,task)=>{
     if(operationActive)return;
     operationActive=true;
@@ -759,13 +952,24 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
   const load=async()=>{
     const data=await api('/api/status');
     const running=data.agent.status==='running';
+    const onboardingComplete=!!data.connection.onboardingComplete;
+    const zoneId=data.connection.zoneId||'';
+
     workerManagedByEnv=!!data.connection.workerManagedByEnv;
     registrationTokenManagedByEnv=!!data.connection.registrationTokenManagedByEnv;
     relayConfigured=!!data.connection.configured;
-    const needsSetup=!!data.connection.needsSetup;
-    $('firstRunSetup').hidden=!needsSetup;
-    document.querySelector('.summary').hidden=needsSetup;
-    document.querySelector('.grid').hidden=needsSetup;
+
+    $('loadingState').hidden=true;
+    $('firstRunSetup').hidden=onboardingComplete;
+    document.querySelector('.summary').hidden=!onboardingComplete;
+    document.querySelector('.grid').hidden=!onboardingComplete;
+
+    $('setupTitle').textContent=relayConfigured
+      ? 'Complete the first Agent start'
+      : 'Choose a Relay before starting Easy Local MCP';
+    $('setupDescription').textContent=relayConfigured
+      ? 'The Relay is saved. Start the Agent to create this device registration, or paste a Zone Join Code to join a Zone on the first start.'
+      : 'Choose a Relay, then start the Agent. You can optionally paste a Zone Join Code to join a Zone immediately instead of registering as a standalone device.';
     $('setupWorkerInput').value=data.connection.suggestedWorkerUrl??DEFAULT_WORKER;
     $('setupWorkerInput').disabled=workerManagedByEnv;
     $('setupUseDefault').disabled=workerManagedByEnv;
@@ -773,16 +977,19 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     $('setupTokenHint').textContent=registrationTokenManagedByEnv
       ? 'Registration token is controlled by LOCALMCP_REGISTRATION_TOKEN.'
       : 'The registration token is stored only until registration succeeds, then deleted.';
+
     $('agentStatus').textContent=data.agent.status+(data.agent.ready?' / ready':running?' / connecting':'');
     $('pid').textContent=data.agent.pid??'-';
     $('expiry').textContent=data.agent.unlockExpiresAt??'-';
     $('logPath').textContent=data.agent.log??'-';
     $('securityBadge').textContent=data.agent.locked?'LOCKED':'UNLOCKED';
     $('securityBadge').className='badge '+(data.agent.locked?'warn':'ok');
+
     $('summaryAgent').textContent=data.agent.ready?'Running / ready':running?'Running / connecting':'Stopped';
-    $('summaryRelay').textContent=needsSetup?'Setup required':data.connection.state;
+    $('summaryRelay').textContent=data.connection.state;
     $('summarySecurity').textContent=data.agent.locked?'LOCKED':'UNLOCKED';
     $('summaryWorkspace').textContent=data.configuration.defaultWorkspace;
+
     $('relayState').textContent=data.connection.state;
     $('worker').textContent=data.connection.workerUrl??'-';
     $('deviceId').textContent=data.connection.deviceId??'legacy / unavailable';
@@ -797,21 +1004,32 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     $('workerHint').textContent=workerManagedByEnv
       ? 'Worker origin is controlled by LOCALMCP_WORKER_URL. Remove the environment override before changing it here.'
       : (data.connection.publicRelay?'Using the public relay. It is trusted infrastructure, not end-to-end encrypted.':running?'Custom Worker origin. Re-registering replaces device credentials for this Agent.':'Relay changes are saved now and used the next time the Agent starts.');
+
+    $('zoneBadge').textContent=zoneId?'Joined':'Standalone';
+    $('zoneBadge').className='badge '+(zoneId?'ok':'');
+    $('zoneStandalone').hidden=!!zoneId;
+    $('zoneJoined').hidden=!zoneId;
+    $('zoneId').textContent=zoneId||'-';
+    $('zoneDeviceId').textContent=data.connection.deviceId??'-';
+
     $('agentStart').disabled=running||!relayConfigured;
     $('agentStop').disabled=!running;
     $('agentRestart').disabled=!running;
     $('lock').disabled=!running;
     document.querySelectorAll('button[data-minutes]').forEach(button=>button.disabled=!running);
+
     setFeatures(data.configuration.features,data.capabilities);
     currentWorkspaces=data.configuration.workspaces.map(item=>({name:item.name,root:item.root}));
     currentDefaultWorkspace=data.configuration.defaultWorkspace;
     renderWorkspaces();
+    return data;
+
   };
   const eventCategory=event=>{
     const name=String(event.event||'').toLowerCase();
     const result=String(event.result||'').toLowerCase();
     if(event.reason||event.error||result==='denied'||result==='error')return 'denied';
-    if(name.includes('lock')||name.includes('unlock')||name.includes('credential')||name.includes('worker')||name.includes('reveal'))return 'security';
+    if(name.includes('lock')||name.includes('unlock')||name.includes('credential')||name.includes('worker')||name.includes('reveal')||name.includes('zone'))return 'security';
     if(name.includes('config'))return 'config';
     if(event.tool)return 'tools';
     return 'other';
@@ -846,29 +1064,90 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     $('auditNext').disabled=auditPage>=totalPages;
   };
   const loadAudit=async()=>{const data=await api('/api/audit');auditEvents=data.events||[];auditPage=1;renderAudit();};
-  const boot=async()=>{await api('/api/session');await load();await loadAudit();};
+  const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+  const waitForState=async(predicate,label)=>{
+    let last=null;
+    for(let attempt=0;attempt<40;attempt++){
+      last=await load();
+      if(predicate(last))return last;
+      if(attempt>3&&last.agent.status==='stopped'){
+        throw new Error(label+' failed because the Agent stopped before registration completed. Check the Agent log for details.');
+      }
+      await pause(250);
+    }
+    throw new Error(label+' is taking longer than expected. Refresh the Control Center to check the current state.');
+  };
+  const copyText=async(value,label)=>{
+    if(!value||value==='-')return;
+    try{
+      if(navigator.clipboard&&window.isSecureContext){
+        await navigator.clipboard.writeText(value);
+      }else{
+        const input=document.createElement('textarea');
+        input.value=value;
+        input.setAttribute('readonly','');
+        input.style.position='fixed';
+        input.style.opacity='0';
+        document.body.appendChild(input);
+        input.select();
+        if(!document.execCommand('copy'))throw new Error('Clipboard unavailable');
+        input.remove();
+      }
+      message(label+' copied.');
+    }catch{
+      message('Unable to copy '+label+'. Select the value and copy it manually.',true);
+    }
+  };
+  const boot=async()=>{
+    await api('/api/session');
+    const data=await load();
+    if(data.connection.onboardingComplete)await loadAudit();
+  };
   const agentAction=async(action)=>{
-    if((action==='stop'||action==='restart')&&!confirm((action==='stop'?'Stop':'Restart')+' the Easy Local MCP Agent? Active MCP connections will be interrupted.'))return;
+    if(action==='stop'||action==='restart'){
+      const approved=await askConfirmation({
+        title:action==='stop'?'Stop Agent?':'Restart Agent?',
+        message:'Active MCP connections may be interrupted.',
+        confirmLabel:action==='stop'?'Stop Agent':'Restart Agent',
+        danger:action==='stop'
+      });
+      if(!approved)return;
+    }
     const labels={start:'Starting Agent…',stop:'Stopping Agent…',restart:'Restarting Agent…'};
     await withOperation(labels[action]||'Updating Agent…',async()=>{
-      await api('/api/agent/'+action,{confirm:action==='start'||action==='stop'||action==='restart'});
+      await api('/api/agent/'+action,{confirm:true});
       await load();
       message('Agent '+action+' completed.');
     });
   };
-  $('setupUseDefault').addEventListener('click',()=>{$('setupWorkerInput').value=DEFAULT_WORKER;});
   $('setupStart').addEventListener('click',async()=>{
-    if(workerManagedByEnv)return;
+    if(workerManagedByEnv){
+      message('Relay origin is controlled by LOCALMCP_WORKER_URL. Remove that environment override before changing it here.',true);
+      return;
+    }
     const workerUrl=$('setupWorkerInput').value.trim();
     const registrationToken=registrationTokenManagedByEnv?undefined:$('setupTokenInput').value;
-    if(!confirm('Save this Relay and start the Easy Local MCP Agent?\n\n'+workerUrl))return;
-    await withOperation('Saving Relay and starting Agent…',async()=>{
+    const zoneJoinCode=$('setupZoneJoinCode').value.trim();
+    if(!workerUrl){
+      message('Enter a Relay URL before starting the Agent.',true);
+      $('setupWorkerInput').focus();
+      return;
+    }
+    await withOperation(zoneJoinCode?'Saving Relay and joining Zone…':'Saving Relay and starting Agent…',async()=>{
       try{
-        await api('/api/relay/configure',{workerUrl,registrationToken,start:true,confirm:true});
+        await api('/api/relay/configure',{workerUrl,registrationToken,start:!zoneJoinCode,confirm:true});
+        if(zoneJoinCode){
+          await api('/api/zone/join',{code:zoneJoinCode,confirm:true});
+        }
         $('setupTokenInput').value='';
-        await load();
+        $('setupZoneJoinCode').value='';
+        const data=await waitForState(
+          state=>state.connection.onboardingComplete&&(zoneJoinCode?!!state.connection.zoneId:true),
+          zoneJoinCode?'Zone join':'First Agent start'
+        );
         await loadAudit();
-        message('Relay saved and Agent started.');
+        message(zoneJoinCode?'Joined Zone and started Agent.':'Relay saved and Agent started.');
+        return data;
       }catch(error){
         await load().catch(()=>{});
         throw error;
@@ -878,6 +1157,43 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
   $('agentStart').addEventListener('click',()=>agentAction('start'));
   $('agentStop').addEventListener('click',()=>agentAction('stop'));
   $('agentRestart').addEventListener('click',()=>agentAction('restart'));
+  $('joinZone').addEventListener('click',async()=>{
+    const code=$('zoneJoinCode').value.trim();
+    if(!code){
+      message('Paste a Zone Join Code first.',true);
+      $('zoneJoinCode').focus();
+      return;
+    }
+    await withOperation('Joining Zone…',async()=>{
+      await api('/api/zone/join',{code,confirm:true});
+      $('zoneJoinCode').value='';
+      await waitForState(
+        state=>state.connection.onboardingComplete&&!!state.connection.zoneId,
+        'Zone join'
+      );
+      await loadAudit();
+      message('Joined Zone and restarted Agent.');
+    });
+  });
+  $('leaveZone').addEventListener('click',async()=>{
+    const approved=await askConfirmation({
+      title:'Leave Zone?',
+      message:'This device will be removed from the Zone, its current Zone-era credentials will be invalidated, and it will restart as a standalone device on the same Relay.',
+      confirmLabel:'Leave Zone',
+      danger:true
+    });
+    if(!approved)return;
+    await withOperation('Leaving Zone…',async()=>{
+      await api('/api/zone/leave',{confirm:true});
+      await waitForState(
+        state=>state.connection.onboardingComplete&&!state.connection.zoneId,
+        'Leave Zone'
+      );
+      await loadAudit();
+      message('Left Zone. This device is now standalone on the same Relay.');
+    });
+  });
+  $('copyZoneDeviceId').addEventListener('click',()=>copyText($('zoneDeviceId').textContent,'Device ID'));
   document.querySelectorAll('button[data-minutes]').forEach(button=>button.addEventListener('click',async()=>{
     const minutes=Number(button.dataset.minutes);
     await withOperation('Unlocking Easy Local MCP…',async()=>{
@@ -901,7 +1217,13 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     });
   });
   $('rotate').addEventListener('click',async()=>{
-    if(!confirm('Rotate Easy Local MCP credentials? Existing connections may be interrupted.'))return;
+    const approved=await askConfirmation({
+      title:'Rotate credentials?',
+      message:'Existing MCP connections may be interrupted and the previous direct MCP URL will stop working.',
+      confirmLabel:'Rotate credentials',
+      danger:true
+    });
+    if(!approved)return;
     await withOperation('Rotating credentials…',async()=>{
       await api('/api/rotate',{confirm:true});
       await load();
@@ -909,28 +1231,42 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     });
   });
   $('reveal').addEventListener('click',async()=>{
-    if(!confirm('The full MCP URL is a credential. Reveal and copy it locally?'))return;
+    const approved=await askConfirmation({
+      title:'Reveal MCP URL?',
+      message:'The full MCP URL is a credential. Anyone who has it can use this device connector until the credential is rotated.',
+      confirmLabel:'Reveal and copy'
+    });
+    if(!approved)return;
     await withOperation('Revealing MCP URL…',async()=>{
       const data=await api('/api/reveal-url',{confirm:true});
       const input=$('revealed');
       input.hidden=false;
       input.value=data.url;
-      try{
-        await navigator.clipboard.writeText(data.url);
-        message('MCP URL revealed and copied.');
-      }catch{
-        message('MCP URL revealed. Clipboard access was unavailable.');
-      }
+      await copyText(data.url,'MCP URL');
     });
   });
   $('useDefaultWorker').addEventListener('click',()=>{$('workerInput').value=DEFAULT_WORKER;});
   $('reregisterWorker').addEventListener('click',async()=>{
-    if(workerManagedByEnv)return;
+    if(workerManagedByEnv){
+      message('Worker origin is controlled by LOCALMCP_WORKER_URL.',true);
+      return;
+    }
     const workerUrl=$('workerInput').value.trim();
     const registrationToken=registrationTokenManagedByEnv?undefined:$('workerTokenInput').value;
     const running=$('agentStatus').textContent.startsWith('running');
+    if(!workerUrl){
+      message('Enter a Relay URL first.',true);
+      $('workerInput').focus();
+      return;
+    }
     if(running){
-      if(!confirm('Re-register this Easy Local MCP device with '+workerUrl+'? Local credentials will switch to the new Worker. The previous Worker registration may remain valid until it is revoked or rotated there.'))return;
+      const approved=await askConfirmation({
+        title:'Re-register Worker?',
+        message:'This device will switch to '+workerUrl+'. Active connections may be interrupted. The previous Worker registration may remain valid until revoked or rotated there.',
+        confirmLabel:'Re-register',
+        danger:true
+      });
+      if(!approved)return;
       await withOperation('Re-registering Worker…',async()=>{
         await api('/api/worker/reregister',{workerUrl,registrationToken,confirm:true});
         $('workerTokenInput').value='';
@@ -938,7 +1274,6 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
         message('Worker re-registration completed.');
       });
     }else{
-      if(!confirm('Save this Relay for the next Agent start?\n\n'+workerUrl))return;
       await withOperation('Saving Relay…',async()=>{
         await api('/api/relay/configure',{workerUrl,registrationToken,start:false,confirm:true});
         $('workerTokenInput').value='';
@@ -947,25 +1282,50 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
       });
     }
   });
-  document.querySelector('input[data-key="processes"]').addEventListener('change',event=>{if(event.target.checked)document.querySelector('input[data-key="shell"]').checked=true;});
-  document.querySelector('input[data-key="shell"]').addEventListener('change',event=>{if(!event.target.checked)document.querySelector('input[data-key="processes"]').checked=false;});
+  document.querySelector('input[data-key="processes"]').addEventListener('change',event=>{
+    if(event.target.checked)document.querySelector('input[data-key="shell"]').checked=true;
+  });
+  document.querySelector('input[data-key="shell"]').addEventListener('change',event=>{
+    if(!event.target.checked)document.querySelector('input[data-key="processes"]').checked=false;
+  });
   $('saveConfig').addEventListener('click',async()=>{
-    const features={};document.querySelectorAll('#capabilityRows input[data-key]').forEach(input=>{features[input.dataset.key]=input.checked;});
+    const features={};
+    document.querySelectorAll('#capabilityRows input[data-key]').forEach(input=>{
+      features[input.dataset.key]=input.checked;
+    });
     const dangerous=['fileWrite','fileDelete','shell','processes','externalMcp'];
     const enabling=dangerous.filter(key=>!currentFeatures?.[key]&&features[key]);
     let confirmDangerous=false;
-    if(enabling.length){confirmDangerous=confirm('Enable privileged capabilities: '+enabling.join(', ')+'?\n\nThese capabilities grant additional authority while Easy Local MCP is unlocked.');if(!confirmDangerous)return;}
+    if(enabling.length){
+      confirmDangerous=await askConfirmation({
+        title:'Enable privileged capabilities?',
+        message:'You are enabling: '+enabling.join(', ')+'.\n\nThese capabilities grant additional authority while Easy Local MCP is unlocked.',
+        confirmLabel:'Enable and save',
+        danger:true
+      });
+      if(!confirmDangerous)return;
+    }
     await withOperation('Saving permission profile…',async()=>{
       await api('/api/config/update',{features,confirmDangerous});
       await load();
       message('Permission profile saved.');
     });
   });
-  $('addWorkspace').addEventListener('click',()=>{let i=1;let name='workspace'+i;const names=new Set(currentWorkspaces.map(item=>item.name));while(names.has(name))name='workspace'+(++i);currentWorkspaces.push({name,root:''});renderWorkspaces();});
+  $('addWorkspace').addEventListener('click',()=>{
+    let i=1;
+    let name='workspace'+i;
+    const names=new Set(currentWorkspaces.map(item=>item.name));
+    while(names.has(name))name='workspace'+(++i);
+    currentWorkspaces.push({name,root:''});
+    renderWorkspaces();
+  });
   $('saveWorkspaces').addEventListener('click',async()=>{
-    if(!confirm('Save workspace changes? This changes the Easy Local MCP file-access boundary.'))return;
     await withOperation('Saving workspaces…',async()=>{
-      await api('/api/workspaces/update',{workspaces:currentWorkspaces,defaultWorkspace:currentDefaultWorkspace,confirm:true});
+      await api('/api/workspaces/update',{
+        workspaces:currentWorkspaces,
+        defaultWorkspace:currentDefaultWorkspace,
+        confirm:true
+      });
       await load();
       message('Workspaces saved.');
     });
@@ -1090,6 +1450,16 @@ export async function startControlUi(options:ControlUiOptions={}):Promise<Contro
           await runAgentAction('start');
         }
         json(res,200,await statusView());
+        return;
+      }
+
+      if(target.pathname==='/api/zone/join'){
+        json(res,200,await joinZone(await readJsonBody(req)));
+        return;
+      }
+
+      if(target.pathname==='/api/zone/leave'){
+        json(res,200,await leaveZone(await readJsonBody(req)));
         return;
       }
 

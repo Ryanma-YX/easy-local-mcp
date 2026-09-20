@@ -55,20 +55,28 @@ Existing Zones created before the Relay Admin registry remain valid. After upgra
 
 ## Join another device
 
-1. Configure the new device to use the same Relay.
-2. In the Zone manager, create a one-time join code.
-3. Stop Easy Local MCP on the device if it is already running.
-4. Stage the join:
+The desktop Control Center is the preferred path:
+
+1. Configure the device to use the same Relay as the Zone.
+2. In Relay Admin, open the Zone and choose **Create Join Code**.
+3. On a fresh device, paste the code into **Zone Join Code (optional)** before the first **Save & Start Agent**. The first registration joins the Zone directly.
+4. On an already registered device, open **Zone membership**, paste the code, and choose **Join Zone**.
+
+The Control Center automatically stops the Agent when needed, retires the previous Relay registration, consumes the Join Code, creates fresh per-device Zone credentials, restarts the Agent, and waits for the new registration before reporting success.
+
+The Join Code is single-use and expires after 10 minutes by default. The display name defaults to the local hostname and can be renamed later by the Zone administrator.
+
+CLI remains available for headless installations:
 
 ```bash
 localmcp join <zone-code>
 ```
 
-5. Start Easy Local MCP normally.
+For the CLI flow, stop Easy Local MCP before staging the join, then start it normally to complete registration.
 
-The join code is single-use and expires after 10 minutes by default. A successful join creates fresh per-device Agent and MCP credentials and deletes the pending local join code.
+## Leave a Zone
 
-The display name defaults to the local hostname. The Zone administrator can rename it later.
+In **Zone membership**, choose **Leave Zone**. The device authenticates the request with its current Agent credential, removes itself from the Zone, invalidates its Zone-era credentials, receives fresh standalone credentials on the same Relay, and restarts automatically. The Relay Admin device list is updated as part of the leave operation, so a normal leave does not leave an offline ghost device behind.
 
 ## Use one connector in ChatGPT
 

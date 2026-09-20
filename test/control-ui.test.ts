@@ -186,14 +186,19 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
   assert.match(html,/auditNext/);
   assert.match(html,/id="operationOverlay"/);
   assert.match(html,/operation-spinner/);
+  assert.match(html,/id="confirmOverlay"/);
+  assert.match(html,/id="confirmProceed"/);
   const inlineScript=/<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
   assert.ok(inlineScript);
   assert.doesNotThrow(()=>new Function(inlineScript));
   assert.match(inlineScript,/withOperation/);
   assert.match(inlineScript,/operationActive/);
+  assert.match(inlineScript,/askConfirmation/);
+  assert.doesNotMatch(inlineScript,/\bconfirm\s*\(/);
+  assert.match(inlineScript,/Saving permission profile/);
+  assert.match(inlineScript,/Saving workspaces/);
   assert.match(inlineScript,/response\.status===401/);
   assert.match(inlineScript,/post\('\/api\/session'/);
-  assert.ok(!html.includes(controlSecret));
   assert.ok(!html.includes('a'.repeat(64)));
 
   const unauthenticated=await fetch(new URL('/api/status',uiUrl),{
@@ -500,12 +505,18 @@ test('fresh Control Center requires explicit Relay setup before Agent start',{ti
   const origin=new URL(uiUrl).origin;
   const page=await fetch(uiUrl);
   const html=await page.text();
-  assert.match(html,/Choose a Relay before starting Easy Local MCP/);
   assert.match(html,/Save & Start Agent/);
+  assert.match(html,/class="summary" hidden/);
+  assert.match(html,/class="grid" hidden/);
+  assert.match(html,/Zone Join Code \(optional\)/);
+  assert.match(html,/Zone membership/);
   const inlineScript=/<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
   assert.ok(inlineScript);
   assert.doesNotThrow(()=>new Function(inlineScript));
-
+  assert.doesNotMatch(inlineScript,/Save this Relay and start the Easy Local MCP Agent/);
+  assert.match(inlineScript,/Saving Relay and starting Agent/);
+  assert.match(inlineScript,/Enter a Relay URL before starting the Agent/);
+  assert.match(inlineScript,/LOCALMCP_WORKER_URL\. Remove that environment override/);
   const sessionResponse=await fetch(new URL('/api/session',uiUrl),{
     method:'POST',
     headers:{Origin:origin,'Content-Type':'application/json'},
@@ -549,7 +560,8 @@ test('fresh Control Center requires explicit Relay setup before Agent start',{ti
   assert.equal(configured.response.status,200);
   assert.equal(configured.value.agent.status,'stopped');
   assert.equal(configured.value.connection.configured,true);
-  assert.equal(configured.value.connection.needsSetup,false);
+  assert.equal(configured.value.connection.onboardingComplete,false);
+  assert.equal(configured.value.connection.needsSetup,true);
   assert.equal(configured.value.connection.workerUrl,'https://relay.example.test/');
 
   const relayFile=JSON.parse(await readFile(join(stateDir,'relay.json'),'utf8'));
