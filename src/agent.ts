@@ -66,6 +66,24 @@ let reloading:Promise<void>|undefined;
 let settings:Settings|undefined;
 let origin:URL|undefined;
 
+type AgentLogLevel='INFO'|'WARN'|'ERROR';
+
+function logEvent(level:AgentLogLevel,event:string,details:Record<string,unknown>={}){
+  const fields=Object.entries(details)
+    .filter(([,value])=>value!==undefined)
+    .map(([key,value])=>`${key}=${JSON.stringify(value instanceof Error?value.message:value)}`)
+    .join(' ');
+  const line=`${new Date().toISOString()} ${level} agent event=${event}${fields?` ${fields}`:''}`;
+
+  if(level==='INFO'){
+    console.log(line);
+  }else if(level==='WARN'){
+    console.warn(line);
+  }else{
+    console.error(line);
+  }
+}
+
 async function registerDevice(workerUrl:string):Promise<Settings>{
   const target=validatedWorkerOrigin(workerUrl);
   const headers:Record<string,string>={
@@ -79,9 +97,9 @@ async function registerDevice(workerUrl:string):Promise<Settings>{
   }
 
   if(target.href===validatedWorkerOrigin(DEFAULT_PUBLIC_WORKER_URL).href){
-    console.error(
-      'Security warning: the default public relay is trusted infrastructure and can observe relayed MCP request/response plaintext. Use a self-hosted Worker for sensitive environments.'
-    );
+    logEvent('WARN','public_relay_trust_warning',{
+      message:'The default public relay is trusted infrastructure and can observe relayed MCP request/response plaintext. Use a self-hosted Worker for sensitive environments.'
+    });
   }
 
   const endpoint=joinCode?'/join':'/register';
@@ -152,11 +170,10 @@ async function loadSettings(){
       publicRelay:desiredOrigin.href===validatedWorkerOrigin(DEFAULT_PUBLIC_WORKER_URL).href
     });
 
-    console.error(
-      settings.zoneId
-        ? `Joined Easy Local MCP Zone ${settings.zoneId} as device ${settings.deviceId??'unknown'}.`
-        : `Registered Easy Local MCP device ${settings.deviceId??'legacy'}.`
-    );
+    logEvent('INFO',settings.zoneId?'zone_joined':'device_registered',{
+      zoneId:settings.zoneId,
+      deviceId:settings.deviceId??'legacy'
+    });
   }
 
   origin=desiredOrigin;
@@ -336,7 +353,7 @@ process.once('SIGTERM',()=>stop());
 process.on('SIGHUP',()=>{
   if(!reloading){
     reloading=reloadLocal()
-      .catch(error=>console.error(error.message))
+      .catch(error=>logEvent('ERROR','local_reload_failed',{error}))
       .finally(()=>{
         reloading=undefined;
       });
@@ -344,12 +361,12 @@ process.on('SIGHUP',()=>{
 });
 
 process.on('uncaughtException',error=>{
-  console.error(error);
+  logEvent('ERROR','uncaught_exception',{error});
   stop(1);
 });
 
 process.on('unhandledRejection',error=>{
-  console.error(error);
+  logEvent('ERROR','unhandled_rejection',{error});
   stop(1);
 });
 
@@ -403,13 +420,13 @@ function spawnLocal(){
 }
 function watchLocal(child:ChildProcess){
   child.on('error',error=>{
-    console.error(error.message);
+    logEvent('ERROR','local_server_error',{error});
     stop(1);
   });
 
   child.on('exit',code=>{
     if(!closing&&!reloading&&child===local){
-      console.error(`Local server exited (${code})`);
+      logEvent('ERROR','local_server_exited',{code});
       stop(1);
     }
   });
@@ -487,7 +504,7 @@ async function reloadLocal(){
 
       if(response.status===405){
         await auditSecurity('config_reload');
-        console.error('Easy Local MCP configuration reloaded.');
+        logEvent('INFO','config_reloaded');
         return;
       }
     }catch{}
@@ -571,9 +588,15 @@ if(!localReady||closing){
       ready=true;
       attempt=0;
 
-      console.log(
-        `Easy Local MCP is running\n\nMCP URL: ${maskMcpUrl(mcpUrl)}\nUse "easy-local-mcp url" to reveal the full credential-bearing URL.\nConfig: ~/.localmcp/localmcp.json\nSecurity: LOCKED until locally unlocked.\n`
-      );
+      logEvent('INFO','worker_connected',{
+        worker:origin?.origin,
+        deviceId:settings?.deviceId??'legacy'
+      });
+      logEvent('INFO','agent_ready',{
+        mcpUrl:maskMcpUrl(mcpUrl),
+        config:'~/.localmcp/localmcp.json',
+        security:'LOCKED'
+      });
     });
 
     const respond=(id:string,value:unknown)=>{
@@ -795,17 +818,20 @@ if(!localReady||closing){
     });
 
     ws.on('error',error=>{
-      console.error(`Worker connection error: ${error.message}`);
+      logEvent('ERROR','worker_connection_error',{error});
     });
 
     ws.on('close',(code,reason)=>{
       ready=false;
       clearInterval(heartbeat);
+      const closeReason=reason.length?reason.toString():undefined;
 
       if(code===AGENT_SUPERSEDED_CLOSE_CODE){
-        console.error(
-          `Worker connection was superseded by a newer Agent connection${reason.length?`: ${reason.toString()}`:''}. Automatic reconnect disabled for this process.`
-        );
+        logEvent('WARN','worker_connection_superseded',{
+          code,
+          reason:closeReason,
+          reconnect:false
+        });
         return;
       }
 
@@ -814,11 +840,16 @@ if(!localReady||closing){
           Math.min(30000,1000*2**Math.min(attempt++,5))
           + Math.random()*1000;
 
-        console.error(
-          `Worker disconnected; reconnecting in ${Math.ceil(delay/1000)}s. Requests are not replayed.`
-        );
+        logEvent('WARN','worker_disconnected',{
+          code,
+          reason:closeReason,
+          reconnectInMs:Math.ceil(delay),
+          requestsReplayed:false
+        });
 
         reconnect=setTimeout(connect,delay);
+      }else{
+        logEvent('INFO','worker_disconnected',{code,reason:closeReason,reconnect:false});
       }
     });
   }

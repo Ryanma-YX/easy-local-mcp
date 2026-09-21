@@ -713,7 +713,7 @@ const homeZh:LanguageDictionary={
   relayAdmin:'Relay 管理',
   eyebrow:'安全本地 Relay',
   heroLine1:'你的本地工具。',
-  heroLine2:'连接，而不暴露。',
+  heroLine2:'安全连接，无需暴露本机服务。',
   lead:'通过带凭证的 Relay，将 AI 客户端连接到文件、Shell、进程、Skills 和私有 MCP 服务；实际执行仍留在你的设备上。',
   openAdmin:'打开 Relay 管理',
   checkHealth:'检查服务状态',
