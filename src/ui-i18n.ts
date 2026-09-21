@@ -688,7 +688,8 @@ const homeEn:LanguageDictionary={
   relayAdmin:'Relay Admin',
   eyebrow:'Secure local relay',
   heroLine1:'Your local tools.',
-  heroLine2:'Connected, not exposed.',
+  heroLine2Prefix:'Connected,',
+  heroLine2Accent:'not exposed.',
   lead:'Bridge AI clients to files, shells, processes, skills and private MCP servers through a credentialed relay—while execution stays on your machine.',
   openAdmin:'Open Relay Admin',
   checkHealth:'Check service health',
@@ -701,10 +702,12 @@ const homeEn:LanguageDictionary={
   localTools:'Local Tools',
   privateMcp:'Private MCP',
   footer:'the relay is the path, not the destination.',
-  privacy:'No external assets · privacy-first landing page',
+  privacy:'© 2026 Ryanma-YX · MIT License',
   language:'Language',
   english:'English',
-  chinese:'中文'
+  chinese:'中文',
+  themeToLight:'Switch to light theme',
+  themeToDark:'Switch to dark theme'
 };
 
 const homeZh:LanguageDictionary={
@@ -712,9 +715,10 @@ const homeZh:LanguageDictionary={
   health:'健康状态',
   relayAdmin:'Relay 管理',
   eyebrow:'安全本地 Relay',
-  heroLine1:'你的本地工具。',
-  heroLine2:'安全连接，无需暴露本机服务。',
-  lead:'通过带凭证的 Relay，将 AI 客户端连接到文件、Shell、进程、Skills 和私有 MCP 服务；实际执行仍留在你的设备上。',
+  heroLine1:'本地工具。',
+  heroLine2Prefix:'连通，',
+  heroLine2Accent:'而不外露。',
+  lead:'通过受信中继，让 AI 客户端直连本地文件、终端、进程与私有 MCP 服务——而所有代码执行，始终留在你的机器上。',
   openAdmin:'打开 Relay 管理',
   checkHealth:'检查服务状态',
   websocketRelay:'WebSocket Relay',
@@ -725,11 +729,13 @@ const homeZh:LanguageDictionary={
   secureRelay:'安全 Relay',
   localTools:'本地工具',
   privateMcp:'私有 MCP',
-  footer:'Relay 是路径，而不是目的地。',
-  privacy:'无外部资源 · 隐私优先首页',
+  footer:'中继是路径，而非终点。',
+  privacy:'© 2026 Ryanma-YX · MIT 许可证',
   language:'语言',
   english:'English',
-  chinese:'中文'
+  chinese:'中文',
+  themeToLight:'切换到亮色主题',
+  themeToDark:'切换到暗色主题'
 };
 
 export const UI_DICTIONARIES:Record<UiScope,ScopeDictionary>={
@@ -811,12 +817,70 @@ const uiTitleKey=UI_SOURCE_TO_KEY[document.title];
 if(uiTitleKey){
   document.title=UI_DICTIONARY[uiLanguage]?.[uiTitleKey]??UI_DICTIONARY.en[uiTitleKey]??document.title;
 }
+const uiChooseLanguage=next=>{
+  localStorage.setItem(UI_LANGUAGE_STORAGE,next==='zh-CN'?'zh-CN':'en');
+  location.reload();
+};
 document.querySelectorAll('[data-ui-language]').forEach(selector=>{
   selector.value=uiLanguage;
-  selector.addEventListener('change',()=>{
-    const next=selector.value==='zh-CN'?'zh-CN':'en';
-    localStorage.setItem(UI_LANGUAGE_STORAGE,next);
-    location.reload();
+  selector.addEventListener('change',()=>uiChooseLanguage(selector.value));
+});
+document.querySelectorAll('[data-ui-language-menu]').forEach(menu=>{
+  const trigger=menu.querySelector('[data-ui-language-trigger]');
+  const popover=menu.querySelector('[data-ui-language-popover]');
+  const current=menu.querySelector('[data-ui-language-current]');
+  const options=Array.from(menu.querySelectorAll('[data-ui-language-option]'));
+  if(!trigger||!popover||!current||!options.length)return;
+
+  const close=()=>{
+    menu.dataset.open='false';
+    trigger.setAttribute('aria-expanded','false');
+    popover.hidden=true;
+  };
+  const open=focusIndex=>{
+    menu.dataset.open='true';
+    trigger.setAttribute('aria-expanded','true');
+    popover.hidden=false;
+    if(Number.isInteger(focusIndex))options[focusIndex]?.focus();
+  };
+  const sync=()=>{
+    current.textContent=uiLanguage==='zh-CN'?'中文':'English';
+    for(const option of options){
+      option.setAttribute('aria-checked',option.dataset.uiLanguageOption===uiLanguage?'true':'false');
+    }
+  };
+
+  sync();
+  trigger.addEventListener('click',()=>{
+    if(menu.dataset.open==='true')close();
+    else open();
+  });
+  trigger.addEventListener('keydown',event=>{
+    if(event.key==='ArrowDown'||event.key==='ArrowUp'){
+      event.preventDefault();
+      open(event.key==='ArrowDown'?0:options.length-1);
+    }
+  });
+  popover.addEventListener('keydown',event=>{
+    const index=options.indexOf(document.activeElement);
+    if(event.key==='Escape'){
+      event.preventDefault();
+      close();
+      trigger.focus();
+      return;
+    }
+    if(event.key==='ArrowDown'||event.key==='ArrowUp'){
+      event.preventDefault();
+      const step=event.key==='ArrowDown'?1:-1;
+      const next=(Math.max(index,0)+step+options.length)%options.length;
+      options[next]?.focus();
+    }
+  });
+  for(const option of options){
+    option.addEventListener('click',()=>uiChooseLanguage(option.dataset.uiLanguageOption));
+  }
+  document.addEventListener('pointerdown',event=>{
+    if(!menu.contains(event.target))close();
   });
 });
 window.uiApplyI18n(document.body);

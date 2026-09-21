@@ -235,7 +235,10 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
   assert.match(landing.headers.get('content-type')||'',/text\/html/);
   const landingHtml=await landing.text();
   assert.match(landingHtml,/Easy Local MCP/);
-  assert.match(landingHtml,/Connected, not exposed/);
+  assert.match(landingHtml,/Connected,/);
+  assert.match(landingHtml,/hero-line2-accent\">not exposed\.<\/span>/);
+  assert.match(landingHtml,/本地工具。/);
+  assert.match(landingHtml,/而不外露。/);
 
   const publicAdmin=await fetch(origin+'/admin');
   assert.equal(publicAdmin.status,200);
