@@ -1,3 +1,5 @@
+import { uiI18nClient } from '../src/ui-i18n';
+
 const styles=`
 :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;background:#f5f7fb}
 body{margin:0}
@@ -40,11 +42,17 @@ button:disabled{cursor:not-allowed;opacity:.58}
 .operation-spinner{width:22px;height:22px;border:3px solid #dbe2ea;border-top-color:#172b4d;border-radius:50%;animation:operation-spin .8s linear infinite;flex:0 0 auto}
 @keyframes operation-spin{to{transform:rotate(360deg)}}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.page-language{position:fixed;top:18px;right:18px;z-index:10}.page-language select{width:auto;min-width:94px;border:1px solid #ccd4e1;border-radius:9px;padding:8px 10px;background:#fff;color:#172033;font:inherit}
 .small{font-size:12px}
 @media(max-width:680px){.device{grid-template-columns:1fr}.zone{align-items:flex-start;flex-direction:column}.device .actions{margin-top:0}.copy-row{grid-template-columns:1fr auto}.copy-label{grid-column:1/-1}}
 `;
 
-function shell(title:string,body:string,script=''){
+function shell(
+  title:string,
+  body:string,
+  script='',
+  scope:'admin-public'|'admin'='admin'
+){
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -54,6 +62,7 @@ function shell(title:string,body:string,script=''){
 <style>${styles}</style>
 </head>
 <body>
+<div class="page-language"><select data-ui-language aria-label="Language"><option value="en">English</option><option value="zh-CN">中文</option></select></div>
 <main>
 ${body}
 </main>
@@ -63,7 +72,7 @@ ${body}
     <span id="operationText">Processing…</span>
   </div>
 </div>
-${script?`<script>${script}</script>`:''}
+<script>${uiI18nClient(scope)}${script}</script>
 </body>
 </html>`;
 }
@@ -77,7 +86,9 @@ export function adminSetupRequiredPage(){
 <p>This Relay intentionally fails closed until <code>RELAY_ADMIN_TOKEN_HASH</code> is configured as a Cloudflare secret or environment variable.</p>
 <p>Zone MCP, Agent, Join Code, and direct device credentials remain separate from Relay administration.</p>
 </div>
-`
+`,
+    '',
+    'admin-public'
   );
 }
 
@@ -99,7 +110,8 @@ const $=id=>document.getElementById(id);
 const token=$('token');
 const show=(text,error=false)=>{
   const node=$('message');
-  node.textContent=text;
+  node.textContent=window.uiT(text);
+
   node.className=error?'error':'';
   clearTimeout(show.timer);
   show.timer=setTimeout(()=>node.className='hidden',4500);
@@ -108,7 +120,8 @@ let operationActive=false;
 const withOperation=async(label,task)=>{
   if(operationActive)return;
   operationActive=true;
-  $('operationText').textContent=label||'Processing…';
+  $('operationText').textContent=window.uiT(label||'Processing…');
+
   $('operationOverlay').hidden=false;
   document.body.setAttribute('aria-busy','true');
   try{
@@ -141,7 +154,8 @@ $('login').onclick=login;
 token.addEventListener('keydown',event=>{
   if(event.key==='Enter')login();
 });
-`
+`,
+    'admin-public'
   );
 }
 
@@ -218,7 +232,8 @@ const $=id=>document.getElementById(id);
 let activeZoneId='';
 const show=(text,error=false)=>{
   const node=$('message');
-  node.textContent=text;
+  node.textContent=window.uiT(text);
+
   node.className=error?'error':'';
   clearTimeout(show.timer);
   show.timer=setTimeout(()=>node.className='hidden',4500);
@@ -228,7 +243,8 @@ let operationActive=false;
 const withOperation=async(label,task)=>{
   if(operationActive)return;
   operationActive=true;
-  $('operationText').textContent=label||'Processing…';
+  $('operationText').textContent=window.uiT(label||'Processing…');
+
   $('operationOverlay').hidden=false;
   document.body.setAttribute('aria-busy','true');
   try{
@@ -249,9 +265,9 @@ async function api(path,options={}){
   try{body=text?JSON.parse(text):{}}catch{}
   if(response.status===401){
     setTimeout(()=>location.reload(),900);
-    throw new Error('Admin session expired. Sign in again.');
+    throw new Error(window.uiT('Admin session expired. Sign in again.'));
   }
-  if(!response.ok)throw new Error(body.error||('Request failed: '+response.status));
+  if(!response.ok)throw new Error(body.error||window.uiT('requestFailed',{status:response.status}));
   return body;
 }
 const jsonHeaders={'Content-Type':'application/json'};
@@ -270,14 +286,14 @@ async function writeClipboard(value){
   input.select();
   if(!document.execCommand('copy')){
     input.remove();
-    throw new Error('Copy failed. Please copy the value manually.');
+    throw new Error(window.uiT('Copy failed. Please copy the value manually.'));
   }
   input.remove();
 }
 async function copyText(value,label){
   try{
     await writeClipboard(value);
-    show((label||'Value')+' copied.');
+    show(window.uiT('copied',{label:window.uiT(label||'Value')}));
   }catch(error){
     show(error?.message||String(error),true);
   }
@@ -312,7 +328,7 @@ function renderJoin(data){
   renderCopyRow(host,'Join Code',data.code,'Copy Code');
   const expiry=document.createElement('div');
   expiry.className='meta';
-  expiry.textContent='Expires: '+new Date(data.expiresAt).toLocaleString();
+  expiry.textContent=window.uiT('expires',{time:new Date(data.expiresAt).toLocaleString()});
   host.appendChild(expiry);
 }
 function renderConnector(data){
@@ -340,7 +356,7 @@ async function loadZones(){
     name.textContent=zone.name;
     const meta=document.createElement('div');
     meta.className='meta';
-    meta.textContent=zone.zoneId+' · created '+new Date(zone.createdAt).toLocaleString();
+    meta.textContent=zone.zoneId+' · '+window.uiT('createdMeta',{time:new Date(zone.createdAt).toLocaleString()});
     info.append(name,meta);
 
     const actions=document.createElement('div');
@@ -352,7 +368,7 @@ async function loadZones(){
     const open=document.createElement('button');
     open.className='secondary';
     open.textContent='Manage';
-    open.onclick=()=>withOperation('Loading Zone…',()=>openZone(zone.zoneId));
+    open.onclick=()=>withOperation(window.uiT('Loading Zone…'),()=>openZone(zone.zoneId));
     actions.append(copy,open);
 
     row.append(info,actions);
@@ -366,7 +382,7 @@ async function openZone(zoneId){
   activeZoneId=zoneId;
   $('zonePanel').className='card';
   $('zoneName').textContent=data.name;
-  $('zoneMeta').textContent=data.devices.length+' device(s) · '+data.activeJoinCodes+' active join code(s) · Connector '+(data.connectorConfigured?'ready':'not configured');
+  $('zoneMeta').textContent=window.uiT('zoneMeta',{devices:data.devices.length,codes:data.activeJoinCodes,connector:window.uiT(data.connectorConfigured?'ready':'not configured')});
   const identity=$('zoneIdentity');
   identity.textContent='';
   renderCopyRow(identity,'Zone ID',data.zoneId,'Copy ID');
@@ -401,17 +417,17 @@ async function openZone(zoneId){
     const state=document.createElement('div');
     const status=document.createElement('div');
     status.className='status '+(device.online?'online':'offline');
-    status.textContent=device.online?'Online':'Offline';
+    status.textContent=window.uiT(device.online?'Online':'Offline');
     const joined=document.createElement('div');
     joined.className='meta';
-    joined.textContent='Joined '+new Date(device.joinedAt).toLocaleString();
+    joined.textContent=window.uiT('joinedAt',{time:new Date(device.joinedAt).toLocaleString()});
     state.append(status,joined);
 
     const actions=document.createElement('div');
     actions.className='actions';
 
     const unlockMinutes=document.createElement('select');
-    unlockMinutes.setAttribute('aria-label','Remote unlock duration');
+    unlockMinutes.setAttribute('aria-label',window.uiT('Remote unlock duration'));
     for(const minutes of [5,15,30,60]){
       const option=document.createElement('option');
       option.value=String(minutes);
@@ -426,7 +442,7 @@ async function openZone(zoneId){
     remoteUnlock.textContent='Remote Unlock';
     remoteUnlock.disabled=!device.online;
     remoteUnlock.onclick=()=>withOperation(
-      'Remotely unlocking '+device.name+'…',
+      window.uiT('remoteUnlocking',{name:device.name}),
       async()=>{
         const minutes=Number(unlockMinutes.value);
         const result=await api(
@@ -440,9 +456,9 @@ async function openZone(zoneId){
           }
         );
         show(
-          device.name+' remotely unlocked for '+minutes+' minutes'
+          window.uiT('remotelyUnlocked',{name:device.name,minutes})
             +(result.expiresAt
-              ? ' · expires '+new Date(result.expiresAt).toLocaleString()
+              ? window.uiT('remotelyUnlockedExpiry',{time:new Date(result.expiresAt).toLocaleString()})
               : '')
         );
       }
@@ -457,7 +473,7 @@ async function openZone(zoneId){
     rename.className='secondary';
     rename.textContent='Rename';
     rename.onclick=()=>{
-      const next=prompt('Device name',device.name);
+      const next=prompt(window.uiT('Device name'),device.name);
       if(!next||next===device.name)return;
       withOperation('Renaming device…',async()=>{
         await api('/api/admin/zones/'+encodeURIComponent(activeZoneId)+'/devices/'+encodeURIComponent(device.deviceId),{
@@ -474,7 +490,7 @@ async function openZone(zoneId){
     revoke.className='danger';
     revoke.textContent='Revoke';
     revoke.onclick=()=>{
-      if(!confirm('Revoke '+device.name+' and invalidate its Relay credentials?'))return;
+      if(!confirm(window.uiT('revokeConfirm',{name:device.name})))return;
       withOperation('Revoking device…',async()=>{
         await api('/api/admin/zones/'+encodeURIComponent(activeZoneId)+'/devices/'+encodeURIComponent(device.deviceId),{
           method:'DELETE'
@@ -532,7 +548,7 @@ $('makeJoin').onclick=()=>withOperation('Creating Join Code…',async()=>{
 });
 
 $('rotateConnector').onclick=()=>{
-  if(!confirm('Rotate this Zone connector? The previous Zone MCP URL stops working immediately.'))return;
+  if(!confirm(window.uiT('Rotate this Zone connector? The previous Zone MCP URL stops working immediately.')))return;
   withOperation('Rotating connector…',async()=>{
     const data=await api('/api/admin/zones/'+encodeURIComponent(activeZoneId)+'/connector',{
       method:'POST'

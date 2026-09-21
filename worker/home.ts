@@ -1,3 +1,5 @@
+import { uiI18nClient } from '../src/ui-i18n';
+
 export function homePage():Response{
   return new Response(HOME_HTML,{
     status:200,
@@ -55,7 +57,7 @@ nav{display:flex;align-items:center;justify-content:space-between;gap:22px;posit
 }
 .mark:before,.mark:after{content:"";position:absolute;border:1px solid rgba(255,255,255,.82);border-radius:50%}
 .mark:before{inset:8px 6px}.mark:after{inset:6px 11px}
-.nav-actions{display:flex;gap:9px}
+.nav-actions{display:flex;gap:9px;align-items:center}.language-select{height:40px;min-width:94px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.035);color:#dce2f2;padding:0 13px;backdrop-filter:blur(12px)}.language-select option{color:#111827;background:#fff}
 .nav-link{
   height:40px;display:inline-flex;align-items:center;padding:0 15px;border-radius:999px;
   text-decoration:none;color:#dce2f2;font-size:14px;border:1px solid rgba(255,255,255,.10);
@@ -185,6 +187,7 @@ footer b{color:#9ba5bd;font-weight:650}
   <nav>
     <div class="brand"><span class="mark" aria-hidden="true"></span><span>Easy Local MCP</span></div>
     <div class="nav-actions">
+      <select class="language-select" data-ui-language aria-label="Language"><option value="en">English</option><option value="zh-CN">中文</option></select>
       <a class="nav-link" href="/healthz">Health</a>
       <a class="nav-link" href="/admin">Relay Admin</a>
     </div>
@@ -238,6 +241,7 @@ footer b{color:#9ba5bd;font-weight:650}
   </footer>
 </div>
 <script>
+${uiI18nClient('home')}
 (function(){
   var scene=document.getElementById('scene');
   if(!scene||matchMedia('(prefers-reduced-motion: reduce)').matches)return;

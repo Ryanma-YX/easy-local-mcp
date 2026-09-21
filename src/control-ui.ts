@@ -11,6 +11,7 @@ import {
 } from './security-policy.js';
 import { control, maskMcpUrl, request, status } from './lifecycle.js';
 import { DEFAULT_PUBLIC_WORKER_URL, validatedWorkerOrigin } from './relay.js';
+import { uiI18nClient } from './ui-i18n.js';
 import {
   clearPendingZoneJoinCode,
   clearRegisteredDevice,
@@ -727,7 +728,7 @@ header{display:flex;justify-content:space-between;gap:20px;align-items:flex-star
 .metric{padding:14px 16px}.metric-label{font-size:12px;color:#667085}.metric-value{margin-top:5px;font-size:17px;font-weight:750;word-break:break-word}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.card{padding:18px}.wide{grid-column:1/-1}
 .row{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid #edf0f4}.row:last-child{border-bottom:0}.label{color:#667085}.value{font-weight:650;text-align:right;word-break:break-all}
-.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}#securityBadge{align-items:center;justify-content:center;align-self:center;line-height:1}button{border:1px solid #cfd6e2;background:#fff;border-radius:9px;padding:8px 12px;font-weight:650;cursor:pointer;color:#27364b}button.primary{background:#172b4d;border-color:#172b4d;color:#fff}button.danger{border-color:#f0a3a3;color:#b42318}button:disabled{opacity:.45;cursor:not-allowed}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.language-select{width:auto!important;min-width:92px}#securityBadge{align-items:center;justify-content:center;align-self:center;line-height:1}button{border:1px solid #cfd6e2;background:#fff;border-radius:9px;padding:8px 12px;font-weight:650;cursor:pointer;color:#27364b}button.primary{background:#172b4d;border-color:#172b4d;color:#fff}button.danger{border-color:#f0a3a3;color:#b42318}button:disabled{opacity:.45;cursor:not-allowed}
 .badge{display:inline-flex;padding:4px 8px;border-radius:999px;background:#eef2f6;font-size:12px;font-weight:750}.badge.ok{background:#e9f8ef;color:#067647}.badge.warn{background:#fff4e5;color:#b54708}.badge.bad{background:#feecec;color:#b42318}
 .muted{font-size:12px;color:#7b8697}.path{font:12px ui-monospace,SFMono-Regular,Consolas,monospace;color:#475467;word-break:break-all}
 .warning{margin-top:12px;padding:11px 12px;border-radius:10px;background:#fff4e5;color:#7a4b00;font-size:13px;font-weight:600}
@@ -745,7 +746,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
 <div class="shell">
 <header>
   <div><h1>Easy Local MCP Control Center</h1><p>Local-only administration over the existing authenticated control plane.</p></div>
-  <div class="header-actions"><button id="refreshStatus">Refresh</button><span id="securityBadge" class="badge">Connecting…</span></div>
+  <div class="header-actions"><select class="language-select" data-ui-language aria-label="Language"><option value="en">English</option><option value="zh-CN">中文</option></select><button id="refreshStatus">Refresh</button><span id="securityBadge" class="badge">Connecting…</span></div>
 </header>
 
 <section id="loadingState" class="card wide" style="margin-bottom:16px">
@@ -896,6 +897,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
 </div>
 <script>
 (() => {
+${uiI18nClient('control')}
   let currentFeatures=null;
   let currentWorkspaces=[];
   let currentDefaultWorkspace='';
@@ -904,11 +906,12 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
   let workerManagedByEnv=false;
   let registrationTokenManagedByEnv=false;
   let relayConfigured=false;
+  let agentRunning=false;
   const DEFAULT_WORKER='https://localmcp-relay.daodao973597.workers.dev';
   const $=id=>document.getElementById(id);
   const message=(value,error=false)=>{
     const node=$('message');
-    node.textContent=value;
+    node.textContent=window.uiT(value);
     node.style.background=error?'#8a1c13':'#172b4d';
     node.style.display='block';
     clearTimeout(message.timer);
@@ -930,10 +933,10 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
       previous(false);
     }
     confirmationResolver=resolve;
-    $('confirmTitle').textContent=options?.title||'Confirm action';
-    $('confirmMessage').textContent=options?.message||'Continue?';
+    $('confirmTitle').textContent=window.uiT(options?.title||'Confirm action');
+    $('confirmMessage').textContent=window.uiT(options?.message||'Continue?');
     const proceed=$('confirmProceed');
-    proceed.textContent=options?.confirmLabel||'Continue';
+    proceed.textContent=window.uiT(options?.confirmLabel||'Continue');
     proceed.className=options?.danger?'danger':'primary';
     $('confirmOverlay').hidden=false;
     setTimeout(()=>proceed.focus(),0);
@@ -950,7 +953,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
   const withOperation=async(label,task)=>{
     if(operationActive)return;
     operationActive=true;
-    $('operationText').textContent=label||'Processing…';
+    $('operationText').textContent=window.uiT(label||'Processing…');
     $('operationOverlay').hidden=false;
     document.body.setAttribute('aria-busy','true');
     try{
@@ -1005,7 +1008,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
   const badge=(text,state)=>{
     const span=document.createElement('span');
     span.className='badge '+(state||'');
-    span.textContent=text;
+    span.textContent=window.uiT(text);
     return span;
   };
   const setFeatures=(features,capabilities)=>{
@@ -1038,7 +1041,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
       root.addEventListener('input',()=>{workspace.root=root.value;});
       tdRoot.append(root);
       const tdAction=document.createElement('td');
-      const remove=document.createElement('button'); remove.textContent='Remove'; remove.className='danger'; remove.disabled=currentWorkspaces.length===1;
+      const remove=document.createElement('button'); remove.textContent=window.uiT('Remove'); remove.className='danger'; remove.disabled=currentWorkspaces.length===1;
       remove.addEventListener('click',()=>{const removed=currentWorkspaces.splice(index,1)[0];if(removed.name===currentDefaultWorkspace)currentDefaultWorkspace=currentWorkspaces[0].name;renderWorkspaces();});
       tdAction.append(remove);
       tr.append(tdDefault,tdName,tdRoot,tdAction); body.append(tr);
@@ -1047,6 +1050,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
   const load=async()=>{
     const data=await api('/api/status');
     const running=data.agent.status==='running';
+    agentRunning=running;
     const onboardingComplete=!!data.connection.onboardingComplete;
     const zoneId=data.connection.zoneId||'';
 
@@ -1079,7 +1083,11 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     const unlockSource=data.agent.unlockSource||null;
 
     $('agentStatus').textContent=
-      data.agent.status+(data.agent.ready?' / ready':running?' / connecting':'');
+      running
+        ? window.uiT(data.agent.ready?'Running / ready':'Running / connecting')
+        : data.agent.status==='stopped'
+          ? window.uiT('Stopped')
+          : data.agent.status;
     $('pid').textContent=data.agent.pid??'-';
     $('unlockMode').textContent=alwaysUnlocked
       ? 'ALWAYS UNLOCKED'
@@ -1114,7 +1122,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
 
     $('summaryAgent').textContent=
       data.agent.ready?'Running / ready':running?'Running / connecting':'Stopped';
-    $('summaryRelay').textContent=data.connection.state;
+    $('summaryRelay').textContent=window.uiT(data.connection.state);
     $('summarySecurity').textContent=alwaysUnlocked
       ? 'ALWAYS UNLOCKED'
       : data.agent.locked
@@ -1124,7 +1132,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
           : 'UNLOCKED';
     $('summaryWorkspace').textContent=data.configuration.defaultWorkspace;
 
-    $('relayState').textContent=data.connection.state;
+    $('relayState').textContent=window.uiT(data.connection.state);
     $('worker').textContent=data.connection.workerUrl??'-';
     $('deviceId').textContent=data.connection.deviceId??'legacy / unavailable';
     $('maskedUrl').textContent=data.connection.mcpUrlMasked??'-';
@@ -1212,7 +1220,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     }
     const shownFrom=filtered.length?start+1:0;
     const shownTo=Math.min(start+pageItems.length,filtered.length);
-    $('auditPageInfo').textContent='Showing '+shownFrom+'–'+shownTo+' of '+filtered.length+' · Page '+auditPage+' / '+totalPages;
+    $('auditPageInfo').textContent=window.uiT('auditPageTemplate',{from:shownFrom,to:shownTo,count:filtered.length,page:auditPage,pages:totalPages});
     $('auditPrev').disabled=auditPage<=1;
     $('auditNext').disabled=auditPage>=totalPages;
   };
@@ -1224,11 +1232,11 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
       last=await load();
       if(predicate(last))return last;
       if(attempt>3&&last.agent.status==='stopped'){
-        throw new Error(label+' failed because the Agent stopped before registration completed. Check the Agent log for details.');
+        throw new Error(window.uiT('waitStoppedTemplate',{label:window.uiT(label)}));
       }
       await pause(250);
     }
-    throw new Error(label+' is taking longer than expected. Refresh the Control Center to check the current state.');
+    throw new Error(window.uiT('waitLongTemplate',{label:window.uiT(label)}));
   };
   const copyText=async(value,label)=>{
     if(!value||value==='-')return;
@@ -1246,9 +1254,9 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
         if(!document.execCommand('copy'))throw new Error('Clipboard unavailable');
         input.remove();
       }
-      message(label+' copied.');
+      message(window.uiT('copiedTemplate',{label:window.uiT(label)}));
     }catch{
-      message('Unable to copy '+label+'. Select the value and copy it manually.',true);
+      message(window.uiT('copyFailedTemplate',{label:window.uiT(label)}),true);
     }
   };
   const boot=async()=>{
@@ -1270,7 +1278,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     await withOperation(labels[action]||'Updating Agent…',async()=>{
       await api('/api/agent/'+action,{confirm:true});
       await load();
-      message('Agent '+action+' completed.');
+      message(window.uiT('agentActionDoneTemplate',{action:window.uiT(action)}));
     });
   };
   $('setupStart').addEventListener('click',async()=>{
@@ -1399,7 +1407,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     await withOperation('Unlocking Easy Local MCP…',async()=>{
       await api('/api/unlock',{minutes});
       await load();
-      message('Easy Local MCP unlocked for '+minutes+' minutes.');
+      message(window.uiT('unlockedMinutesTemplate',{minutes}));
     });
   }));
   $('lock').addEventListener('click',async()=>{
@@ -1453,7 +1461,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     }
     const workerUrl=$('workerInput').value.trim();
     const registrationToken=registrationTokenManagedByEnv?undefined:$('workerTokenInput').value;
-    const running=$('agentStatus').textContent.startsWith('running');
+    const running=agentRunning;
     if(!workerUrl){
       message('Enter a Relay URL first.',true);
       $('workerInput').focus();
@@ -1462,7 +1470,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     if(running){
       const approved=await askConfirmation({
         title:'Re-register Worker?',
-        message:'This device will switch to '+workerUrl+'. Active connections may be interrupted. The previous Worker registration may remain valid until revoked or rotated there.',
+        message:window.uiT('reregisterWarningTemplate',{url:workerUrl}),
         confirmLabel:'Re-register',
         danger:true
       });
@@ -1499,7 +1507,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
     if(enabling.length){
       confirmDangerous=await askConfirmation({
         title:'Enable privileged capabilities?',
-        message:'You are enabling: '+enabling.join(', ')+'.\n\nThese capabilities grant additional authority while Easy Local MCP is unlocked.',
+        message:window.uiT('enablingCapabilitiesTemplate',{capabilities:enabling.join(', ')}),
         confirmLabel:'Enable and save',
         danger:true
       });
