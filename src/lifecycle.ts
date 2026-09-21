@@ -143,7 +143,7 @@ export async function status():Promise<Status>{
   try{
     return await request();
   }catch(error:any){
-    if(!['ENOENT','ECONNREFUSED','ECONNRESET','EPIPE'].includes(error.code)){
+    if(!['ENOENT','ECONNREFUSED','ECONNRESET','ENOTCONN','EPIPE'].includes(error.code)){
       throw error;
     }
 

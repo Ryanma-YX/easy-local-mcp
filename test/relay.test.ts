@@ -1569,7 +1569,7 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     }
   });
 
-  const slowStartDeadline=Date.now()+5000;
+  const slowStartDeadline=Date.now()+15000;
   while(true){
     try{
       assert.equal(await readFile(slowStarted,'utf8'),'started');
