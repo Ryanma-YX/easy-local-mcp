@@ -22,6 +22,7 @@ const HOME_HTML=String.raw`<!doctype html>
 <title>Easy Local MCP · Secure Local Relay</title>
 <script>
 try{document.documentElement.dataset.theme=localStorage.getItem('easy-local-mcp.ui-theme')==='light'?'light':'dark'}catch{document.documentElement.dataset.theme='dark'}
+try{if(new URLSearchParams(location.search).get('motion')==='force')document.documentElement.dataset.forceMotion='true'}catch{}
 </script>
 <style>
 :root{
@@ -167,16 +168,16 @@ html[lang="zh-CN"] .hero-line2-accent{
   border-color:rgba(113,212,255,.12)
 }
 .node{
-  position:absolute;display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:12px;
+  --node-z:48px;position:absolute;display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:12px;
   background:rgba(13,18,34,.82);border:1px solid rgba(175,190,255,.18);
   box-shadow:0 10px 36px rgba(0,0,0,.35);backdrop-filter:blur(12px);
-  font-size:11px;color:#dce4ff;white-space:nowrap
+  font-size:11px;color:#dce4ff;white-space:nowrap;will-change:transform;transform:translateZ(var(--node-z))
 }
 .node:before{content:"";width:7px;height:7px;border-radius:50%;background:#91a8ff;box-shadow:0 0 12px #7f91ff}
-.n1{left:25px;top:112px;transform:translateZ(58px)}
-.n2{right:14px;top:80px;transform:translateZ(42px)}
-.n3{right:0;bottom:108px;transform:translateZ(78px)}
-.n4{left:24px;bottom:83px;transform:translateZ(28px)}
+.n1{left:25px;top:112px;--node-z:58px}
+.n2{right:14px;top:80px;--node-z:42px}
+.n3{right:0;bottom:108px;--node-z:78px}
+.n4{left:24px;bottom:83px;--node-z:28px}
 .core-wrap{position:absolute;inset:0;display:grid;place-items:center;transform-style:preserve-3d;animation:float 5s ease-in-out infinite}
 .core{
   position:relative;width:176px;height:176px;transform-style:preserve-3d;
@@ -286,7 +287,8 @@ html[data-theme="light"] .footer-link:hover{color:#4f5a78}
   .scene{transform:scale(.68) rotateX(var(--rx)) rotateY(var(--ry))}
 }
 @media(prefers-reduced-motion:reduce){
-  *,*:before,*:after{animation:none!important;transition:none!important}.scene{transform:rotateX(-10deg) rotateY(-16deg)}
+  html:not([data-force-motion="true"]) *,html:not([data-force-motion="true"]) *:before,html:not([data-force-motion="true"]) *:after{animation:none!important;transition:none!important}
+  html:not([data-force-motion="true"]) .scene{transform:rotateX(-10deg) rotateY(-16deg)}
 }
 </style>
 </head>
@@ -383,21 +385,54 @@ ${uiI18nClient('home')}
 })();
 (function(){
   var scene=document.getElementById('scene');
-  if(!scene||matchMedia('(prefers-reduced-motion: reduce)').matches)return;
-  var targetX=-11,targetY=-18,currentX=-11,currentY=-18,raf=0;
-  function draw(){
+  var forceMotion=document.documentElement.dataset.forceMotion==='true';
+  if(!scene||(!forceMotion&&matchMedia('(prefers-reduced-motion: reduce)').matches))return;
+
+  var stage=scene.closest('.stage');
+  var nodes=Array.from(scene.querySelectorAll('.node'));
+  var depths=[58,42,78,28];
+  var phases=[Math.PI,Math.PI*1.5,0,Math.PI*.5];
+  var targetX=-11,targetY=-18,currentX=-11,currentY=-18,tiltRaf=0;
+  var homeMix=0,targetHomeMix=0,nodeRaf=0;
+
+  function drawTilt(){
     currentX+=(targetX-currentX)*.08;
     currentY+=(targetY-currentY)*.08;
     scene.style.setProperty('--rx',currentX.toFixed(2)+'deg');
     scene.style.setProperty('--ry',currentY.toFixed(2)+'deg');
-    if(Math.abs(targetX-currentX)>.02||Math.abs(targetY-currentY)>.02)raf=requestAnimationFrame(draw);
-    else raf=0;
+    if(Math.abs(targetX-currentX)>.02||Math.abs(targetY-currentY)>.02)tiltRaf=requestAnimationFrame(drawTilt);
+    else tiltRaf=0;
   }
+
+  function drawNodes(now){
+    homeMix+=(targetHomeMix-homeMix)*.095;
+    var angle=now*.00026;
+    var cx=scene.clientWidth/2;
+    var cy=scene.clientHeight/2;
+    for(var i=0;i<nodes.length;i++){
+      var node=nodes[i];
+      var homeX=node.offsetLeft+node.offsetWidth/2;
+      var homeY=node.offsetTop+node.offsetHeight/2;
+      var orbitX=cx+Math.cos(angle+phases[i])*194;
+      var orbitY=cy+Math.sin(angle+phases[i])*146;
+      var dx=(orbitX-homeX)*(1-homeMix);
+      var dy=(orbitY-homeY)*(1-homeMix);
+      node.style.transform='translate3d('+dx.toFixed(2)+'px,'+dy.toFixed(2)+'px,'+depths[i]+'px)';
+    }
+    nodeRaf=requestAnimationFrame(drawNodes);
+  }
+
   window.addEventListener('pointermove',function(e){
     targetY=-18+(e.clientX/window.innerWidth-.5)*12;
     targetX=-11-(e.clientY/window.innerHeight-.5)*8;
-    if(!raf)raf=requestAnimationFrame(draw);
+    if(!tiltRaf)tiltRaf=requestAnimationFrame(drawTilt);
   },{passive:true});
+
+  if(stage){
+    stage.addEventListener('pointerenter',function(e){if(e.pointerType!=='touch')targetHomeMix=1},{passive:true});
+    stage.addEventListener('pointerleave',function(){targetHomeMix=0},{passive:true});
+  }
+  nodeRaf=requestAnimationFrame(drawNodes);
 })();
 </script>
 </body>
