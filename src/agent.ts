@@ -13,7 +13,8 @@ import {
   Assembly,
   frames,
   parseFrame,
-  MAX_BYTES
+  MAX_BYTES,
+  AGENT_SUPERSEDED_CLOSE_CODE
 } from './relay-protocol.js';
 import { DEFAULT_PUBLIC_WORKER_URL, validatedWorkerOrigin } from './relay.js';
 import {
@@ -797,9 +798,16 @@ if(!localReady||closing){
       console.error(`Worker connection error: ${error.message}`);
     });
 
-    ws.on('close',()=>{
+    ws.on('close',(code,reason)=>{
       ready=false;
       clearInterval(heartbeat);
+
+      if(code===AGENT_SUPERSEDED_CLOSE_CODE){
+        console.error(
+          `Worker connection was superseded by a newer Agent connection${reason.length?`: ${reason.toString()}`:''}. Automatic reconnect disabled for this process.`
+        );
+        return;
+      }
 
       if(!closing){
         const delay=

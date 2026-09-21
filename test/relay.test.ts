@@ -230,6 +230,13 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
   assert.equal(health.relayAdminProtected,true);
   assert.equal(health.zones,true);
 
+  const landing=await fetch(origin+'/');
+  assert.equal(landing.status,200);
+  assert.match(landing.headers.get('content-type')||'',/text\/html/);
+  const landingHtml=await landing.text();
+  assert.match(landingHtml,/Easy Local MCP/);
+  assert.match(landingHtml,/Connected, not exposed/);
+
   const publicAdmin=await fetch(origin+'/admin');
   assert.equal(publicAdmin.status,200);
   const publicAdminHtml=await publicAdmin.text();
@@ -1336,37 +1343,6 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     content
   );
 
-  const duplicate=new WebSocket(
-    origin.replace('http:','ws:')
-      +`/agent/${registered.deviceId}`,
-    {
-      headers:{
-        Authorization:`Bearer ${registered.agentToken}`
-      }
-    }
-  );
-
-  const duplicateStatus=await new Promise<number>((resolveStatus,reject)=>{
-    duplicate.on(
-      'unexpected-response',
-      (_request,response)=>{
-        response.resume();
-        duplicate.terminate();
-        resolveStatus(response.statusCode!);
-      }
-    );
-
-    duplicate.on('error',()=>{});
-
-    duplicate.on('open',()=>{
-      duplicate.close();
-      reject(
-        new Error('Duplicate accepted')
-      );
-    });
-  });
-
-  assert.equal(duplicateStatus,409);
 
   const configPath=join(
     root,
@@ -1813,6 +1789,40 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
   );
 
   await second.close();
+
+  const currentWorker=JSON.parse(
+    await readFile(
+      join(root,'.localmcp','worker.json'),
+      'utf8'
+    )
+  );
+  const takeover=new WebSocket(
+    origin.replace('http:','ws:')
+      +`/agent/${registered.deviceId}`,
+    {
+      headers:{
+        Authorization:`Bearer ${currentWorker.agentToken}`
+      }
+    }
+  );
+
+  await new Promise<void>((resolveOpen,reject)=>{
+    takeover.once('open',resolveOpen);
+    takeover.once('error',reject);
+    takeover.once(
+      'unexpected-response',
+      (_request,response)=>{
+        response.resume();
+        reject(
+          new Error(
+            `Agent takeover was rejected with HTTP ${response.statusCode}`
+          )
+        );
+      }
+    );
+  });
+
+  takeover.close();
   await cli('stop');
 
   await writeFile(

@@ -9,6 +9,7 @@ import {
   registerZone
 } from './admin-session';
 import { handleZoneMcp } from './zone-mcp';
+import { homePage } from './home';
 export { RelayAdmin } from './relay-admin';
 export { ZoneManager } from './zone';
 import {
@@ -17,6 +18,8 @@ import {
   parseFrame,
   MAX_CONCURRENT_REQUESTS,
   MAX_CONTROL_REQUESTS,
+  AGENT_SUPERSEDED_CLOSE_CODE,
+  AGENT_SUPERSEDED_CLOSE_REASON,
   isConcurrentReadRequest
 } from '../src/relay-protocol';
 interface Env {
@@ -314,6 +317,10 @@ async function zoneInfo(
 export default {
   async fetch(request:Request,env:Env):Promise<Response>{
     const url=new URL(request.url);
+
+    if(url.pathname==='/'&&request.method==='GET'){
+      return homePage();
+    }
 
     if(url.pathname==='/healthz'&&request.method==='GET'){
       return json({
@@ -1661,13 +1668,14 @@ export class McpRelay {
         }
       }
 
-      if(this.ctx.getWebSockets('agent').length){
-        return json(
-          {
-            error:'An agent is already connected'
-          },
-          409
-        );
+      for(const existing of this.ctx.getWebSockets('agent')){
+        this.failSocket(existing);
+        try{
+          existing.close(
+            AGENT_SUPERSEDED_CLOSE_CODE,
+            AGENT_SUPERSEDED_CLOSE_REASON
+          );
+        }catch{}
       }
 
       const pair=new WebSocketPair();

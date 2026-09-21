@@ -3,6 +3,8 @@ export const MAX_BYTES = 8 * 1024 * 1024;
 export const CHUNK_SIZE = 24000;
 export const MAX_CONCURRENT_REQUESTS = 8;
 export const MAX_CONTROL_REQUESTS = 64;
+export const AGENT_SUPERSEDED_CLOSE_CODE = 4009;
+export const AGENT_SUPERSEDED_CLOSE_REASON = 'Superseded by a newer agent connection';
 export const CONCURRENT_READ_TOOLS = [
   'workspace_info',
   'list_workspaces',
