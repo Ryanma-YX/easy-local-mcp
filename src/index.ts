@@ -109,6 +109,19 @@ function requestCanRunDuringMutation(body:unknown){
   return isConcurrentReadRequest(body);
 }
 
+async function autoStartDesktopAgent(){
+  const {startDesktopAgentInBackground}=await import('./lifecycle.js');
+  const current=await startDesktopAgentInBackground(ensureInitialized);
+
+  if(current){
+    console.log(
+      current.ready
+        ? 'Easy Local MCP desktop Agent connected.'
+        : 'Easy Local MCP desktop Agent started; waiting for Relay connection.'
+    );
+  }
+}
+
 async function main(){
   const mode=process.argv[2]||'start';
 
@@ -169,6 +182,12 @@ async function main(){
 
     if(desktopHost){
       console.log(`LOCALMCP_CONTROL_URL=${ui.url}`);
+      void autoStartDesktopAgent().catch(error=>{
+        console.error(
+          'Easy Local MCP desktop Agent auto-start failed:',
+          error instanceof Error?error.message:String(error)
+        );
+      });
     }else if(desktop){
       const {openDesktopControl}=await import('./desktop.js');
       const launched=await openDesktopControl(ui.url);

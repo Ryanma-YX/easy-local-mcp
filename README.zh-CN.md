@@ -33,7 +33,7 @@ Easy Local MCP 基于 [daodao97/localmcp](https://github.com/daodao97/localmcp) 
 
 ## 主要功能
 
-- Windows 桌面客户端、Control Center 与系统托盘
+- Windows 桌面客户端、Control Center 与系统托盘，支持随系统启动，并为已注册设备自动重连
 - 文件浏览、搜索、读取、创建、编辑、移动与删除
 - Shell 命令与持久进程
 - 多 Workspace

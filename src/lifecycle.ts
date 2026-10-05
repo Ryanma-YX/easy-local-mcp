@@ -7,7 +7,11 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { controlEndpoint } from './control-endpoint.js';
 import { ensureControlSecret, getControlSecret } from './security.js';
-import { ensureRelayConfigured } from './relay-config.js';
+import {
+  ensureRelayConfigured,
+  registeredDeviceRecord,
+  relaySetupState
+} from './relay-config.js';
 
 export const stateDir=resolve(homedir(),'.localmcp');
 export const logFile=resolve(stateDir,'agent.log');
@@ -250,6 +254,51 @@ async function spawnBackgroundAgent(logFd:number){
 
   child.unref();
   return child;
+}
+
+export async function startDesktopAgentInBackground(
+  initialize:()=>Promise<void>=async()=>{}
+):Promise<Status|null>{
+  return locked(async()=>{
+    let current=await status();
+    if(current.status==='running')return current;
+
+    const relay=await relaySetupState();
+    if(!relay.configured||!relay.workerUrl)return null;
+
+    const registered=await registeredDeviceRecord();
+    if(!registered||registered.workerUrl!==relay.workerUrl)return null;
+
+    await initialize();
+
+    if(endpoint.socketFile){
+      await rm(endpoint.socketFile,{force:true});
+    }
+
+    const log=await open(logFile,'a',0o600);
+    let child:ReturnType<typeof spawn>|undefined;
+
+    try{
+      child=await spawnBackgroundAgent(log.fd);
+    }finally{
+      await log.close();
+    }
+
+    const deadline=Date.now()+10000;
+
+    while(Date.now()<deadline){
+      current=await status();
+      if(current.status==='running')return current;
+
+      if(child&&(child.exitCode!==null||child.signalCode!==null)){
+        throw new Error(`Easy Local MCP background startup failed; see ${logFile}`);
+      }
+
+      await pause(100);
+    }
+
+    throw new Error(`Easy Local MCP background startup timed out; see ${logFile}`);
+  });
 }
 
 async function locked<T>(action:()=>Promise<T>):Promise<T>{

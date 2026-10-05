@@ -33,7 +33,7 @@ Easy Local MCP is based on [daodao97/localmcp](https://github.com/daodao97/local
 
 ## Highlights
 
-- Windows desktop app with Control Center and system tray
+- Windows desktop app with Control Center, system tray, optional start-with-system, and automatic reconnect for registered devices
 - Files: browse, search, read, create, edit, move, and delete
 - Shell commands and persistent processes
 - Multiple workspaces

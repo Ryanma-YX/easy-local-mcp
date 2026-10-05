@@ -13,11 +13,12 @@ use std::{
 
 use tauri::{
     image::Image,
-    menu::{Menu, MenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::WebviewWindowBuilder,
     Manager, WebviewUrl, WindowEvent,
 };
+use tauri_plugin_autostart::ManagerExt;
 use url::Url;
 
 #[cfg(target_os = "windows")]
@@ -283,9 +284,15 @@ fn main() {
         return;
     }
 
+    let launched_from_autostart = env::args().any(|arg| arg == "--autostart");
+
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--autostart"]),
+        ))
         .manage(HostProcess(Mutex::new(None)))
-        .setup(|app| {
+        .setup(move |app| {
             let (control, bundled_host) = resolve_control(app.handle())
                 .map_err(std::io::Error::other)?;
             let navigation_target = control.clone();
@@ -300,6 +307,7 @@ fn main() {
             .inner_size(1180.0, 820.0)
             .min_inner_size(860.0, 620.0)
             .center()
+            .visible(!launched_from_autostart)
             .on_navigation(move |url| {
                 url.scheme() == "http"
                     && url.host_str() == Some("127.0.0.1")
@@ -335,6 +343,15 @@ fn main() {
                 true,
                 None::<&str>,
             )?;
+            let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
+            let autostart = CheckMenuItem::with_id(
+                app,
+                "autostart",
+                "Start with system",
+                true,
+                autostart_enabled,
+                None::<&str>,
+            )?;
             let quit = MenuItem::with_id(
                 app,
                 "quit",
@@ -342,15 +359,34 @@ fn main() {
                 true,
                 None::<&str>,
             )?;
-            let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
+            let menu = Menu::with_items(app, &[&show, &hide, &autostart, &quit])?;
+            let autostart_menu = autostart.clone();
 
-            let mut tray = TrayIconBuilder::new()
+            let tray = TrayIconBuilder::new()
                 .tooltip("Easy Local MCP")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id.as_ref() {
+                .on_menu_event(move |app, event| match event.id.as_ref() {
                     "show" => show_main(app),
                     "hide" => hide_main(app),
+                    "autostart" => {
+                        let manager = app.autolaunch();
+                        let current = manager.is_enabled().unwrap_or(false);
+                        let desired = !current;
+                        let result = if desired {
+                            manager.enable()
+                        } else {
+                            manager.disable()
+                        };
+
+                        if let Err(error) = result {
+                            eprintln!("Unable to update Easy Local MCP autostart: {error}");
+                            let actual = manager.is_enabled().unwrap_or(current);
+                            let _ = autostart_menu.set_checked(actual);
+                        } else {
+                            let _ = autostart_menu.set_checked(desired);
+                        }
+                    }
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -363,9 +399,8 @@ fn main() {
                     {
                         show_main(tray.app_handle());
                     }
-                });
-
-            tray = tray.icon(platform_icon);
+                })
+                .icon(platform_icon);
 
             tray.build(app)?;
 

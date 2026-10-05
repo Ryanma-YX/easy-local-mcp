@@ -40,6 +40,8 @@ The Rust shell does not receive MCP URL credentials, control.secret, agentToken,
 - left-click tray icon shows/focuses the Control Center
 - Show Control Center menu item
 - Hide Control Center menu item
+- Start with system toggle; autostart launches hidden to tray
+- registered devices automatically start the Agent and reconnect to the Relay when Desktop starts
 - Quit Easy Local MCP Desktop menu item
 - closing the native window hides it to tray
 - Quit closes the Tauri shell and its Control Center HTTP host

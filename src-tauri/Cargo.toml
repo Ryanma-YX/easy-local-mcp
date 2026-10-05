@@ -10,4 +10,5 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2.11.5", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "=2.5.1"
 url = "2.5"
