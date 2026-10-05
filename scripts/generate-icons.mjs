@@ -80,6 +80,7 @@ function runTauriIcon(source, output) {
     cwd: root,
     stdio: "inherit",
     shell: false,
+    windowsHide: process.platform === "win32",
   });
 
   if (result.error) {

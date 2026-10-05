@@ -60,7 +60,8 @@ test('authenticated native IPC supports masked status, url reveal, unlock, lock,
       [resolve('dist/index.js'),...args],
       {
         env,
-        timeout:10000
+        timeout:10000,
+        windowsHide:process.platform==='win32'
       }
     )
   ).stdout;
@@ -76,7 +77,8 @@ test('authenticated native IPC supports masked status, url reveal, unlock, lock,
       [],
       {
         env,
-        stdio:['ignore','ignore','pipe','ipc']
+        stdio:['ignore','ignore','pipe','ipc'],
+        windowsHide:process.platform==='win32'
       }
     );
 

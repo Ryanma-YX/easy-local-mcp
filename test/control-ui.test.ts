@@ -131,7 +131,8 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
     [],
     {
       env,
-      stdio:['ignore','ignore','pipe','ipc']
+      stdio:['ignore','ignore','pipe','ipc'],
+      windowsHide:process.platform==='win32'
     }
   );
   fixture.stderr?.on('data',data=>{fixtureErrors+=data.toString();});
@@ -159,7 +160,8 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
     [resolve('dist/index.js'),'ui','--no-open'],
     {
       env,
-      stdio:['ignore','pipe','pipe']
+      stdio:['ignore','pipe','pipe'],
+      windowsHide:process.platform==='win32'
     }
   );
   ui.stdout?.on('data',data=>{uiOutput+=data.toString();});
@@ -458,7 +460,7 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
     await exec(
       process.execPath,
       [resolve('dist/index.js'),'status'],
-      {env,timeout:10000}
+      {env,timeout:10000,windowsHide:process.platform==='win32'}
     )
   ).stdout;
 
@@ -495,7 +497,7 @@ test('local control UI is loopback-only, authenticated, redacted and uses isolat
     await exec(
       process.execPath,
       [resolve('dist/index.js'),'status'],
-      {env,timeout:10000}
+      {env,timeout:10000,windowsHide:process.platform==='win32'}
     )
   ).stdout;
   assert.match(cliAfterReregister,/reregistrations:1/);
@@ -544,7 +546,7 @@ test('fresh Control Center requires explicit Relay setup before Agent start',{ti
   ui=spawn(
     process.execPath,
     [resolve('dist/index.js'),'ui','--no-open'],
-    {env,stdio:['ignore','pipe','pipe']}
+    {env,stdio:['ignore','pipe','pipe'],windowsHide:process.platform==='win32'}
   );
   ui.stderr?.on('data',data=>{uiErrors+=data.toString();});
 

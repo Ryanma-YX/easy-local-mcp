@@ -128,7 +128,8 @@ test('fresh init uses a dedicated safe workspace instead of exposing the home di
         HOME:home,
         USERPROFILE:home
       },
-      timeout:10000
+      timeout:10000,
+      windowsHide:process.platform==='win32'
     }
   );
 
@@ -354,7 +355,8 @@ test('HTTP URL credential and origin protection work with secure read-only tools
         LOCALMCP_PORT:String(port),
         LOCALMCP_TOKEN:token
       },
-      stdio:'ignore'
+      stdio:'ignore',
+      windowsHide:process.platform==='win32'
     }
   );
 

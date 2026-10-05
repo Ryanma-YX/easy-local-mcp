@@ -41,7 +41,9 @@ async function restrictPath(path:string){
       '/grant:r',
       `${identity}:(F)`,
       '*S-1-5-18:(F)'
-    ]);
+    ],{
+      windowsHide:true
+    });
   }catch(error){
     console.error(
       `Warning: unable to apply restrictive Windows ACL to ${path}: ${error instanceof Error?error.message:String(error)}`

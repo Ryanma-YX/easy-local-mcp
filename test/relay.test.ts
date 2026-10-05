@@ -189,7 +189,8 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
         'ignore',
         'pipe',
         'pipe'
-      ]
+      ],
+      windowsHide:process.platform==='win32'
     }
   );
 
@@ -995,7 +996,8 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
             'ignore',
             'pipe',
             'pipe'
-          ]
+          ],
+          windowsHide:process.platform==='win32'
         }
       );
 
