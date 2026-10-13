@@ -9,6 +9,9 @@ import { controlEndpoint } from './control-endpoint.js';
 import { listenWithSocketRecovery, withStartupLock } from './socket-recovery.js';
 import { ensureControlSecret, getControlSecret } from './security.js';
 import {
+  assertManagedOwner, commandUserService, managedUserServiceState
+} from './systemd-service.js';
+import {
   ensureRelayConfigured,
   registeredDeviceRecord,
   relaySetupState
@@ -262,6 +265,22 @@ export async function startDesktopAgentInBackground(
 ):Promise<Status|null>{
   return locked(async()=>{
     let current=await status();
+    const managed=await managedUserServiceState();
+    if(managed){
+      assertManagedOwner(managed,current);
+      if(current.status==='running')return current;
+      const relay=await relaySetupState();
+      if(!relay.configured||!relay.workerUrl)return null;
+      const registered=await registeredDeviceRecord();
+      if(!registered||registered.workerUrl!==relay.workerUrl)return null;
+      await initialize();
+      await commandUserService('start');
+      current=await status();
+      if(current.status!=='running'){
+        throw new Error('systemd started the user service but the Agent control endpoint is unavailable');
+      }
+      return current;
+    }
     if(current.status==='running')return current;
 
     const relay=await relaySetupState();
@@ -356,20 +375,72 @@ async function locked<T>(action:()=>Promise<T>):Promise<T>{
 }
 
 export async function control(
-  command:'start'|'stop'|'reload',
+  command:'start'|'stop'|'reload'|'restart',
   initialize:()=>Promise<void>=async()=>{}
 ){
   return locked(async()=>{
     let current=await status();
+    const managed=await managedUserServiceState();
 
-    if(command==='reload'){
+    if(managed){
+      // systemd (not this CLI) is the lifetime owner. Never spawn a detached
+      // replacement while an installer-owned user service is configured.
+      assertManagedOwner(managed,current);
+
+      if(command==='reload'){
+        if(current.status==='stopped'){
+          throw new Error('Easy Local MCP is stopped; start its systemd user service first');
+        }
+        current=await request('reload');
+        console.log('Easy Local MCP configuration reloaded.');
+      }else{
+        if(command==='start'||command==='restart'){
+          if(current.status==='stopped')await ensureRelayConfigured();
+          await initialize();
+        }
+        if(command==='stop'){
+          await commandUserService('stop');
+        }else if(command==='restart'){
+          await commandUserService(managed.active?'restart':'start');
+        }else{
+          await commandUserService('start');
+        }
+
+        current=await status();
+        if(command==='stop'&&current.status!=='stopped'){
+          throw new Error('systemd stop returned, but the Agent control endpoint is still running');
+        }
+        if(command!=='stop'&&current.status!=='running'){
+          throw new Error('systemd start returned, but the Agent control endpoint is unavailable');
+        }
+      }
+      console.log('Supervision: systemd user service ('+managed.unit+')');
+      printStatus(current);
+      return;
+    }
+
+    // Retain the existing standalone behavior for installations which have
+    // not opted into the systemd user service.
+    if(command==='restart'&&current.status==='running'){
+      await request('stop');
+      for(let i=0;i<100;i++){
+        current=await status();
+        if(current.status==='stopped')break;
+        await pause(100);
+      }
+      if(current.status!=='stopped'){
+        throw new Error(`Easy Local MCP did not stop; see ${logFile}`);
+      }
+    }
+    const action=command==='restart'?'start':command;
+    if(action==='reload'){
       if(current.status==='stopped'){
         throw new Error('Easy Local MCP is stopped; run easy-local-mcp to start it');
       }
 
       current=await request('reload');
       console.log('Easy Local MCP configuration reloaded.');
-    }else if(command==='stop'){
+    }else if(action==='stop'){
       if(current.status==='running'){
         await request('stop');
 

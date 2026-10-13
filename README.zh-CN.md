@@ -70,6 +70,8 @@ npm ci
 npm run desktop:bundle
 ```
 
+Linux 用户级 systemd 守护服务（无需 root 运行 Agent）：请参考 [Linux systemd 指南](docs/LINUX-SYSTEMD.md)。安装脚本不会自动启动服务。安装后，CLI/控制中心的启动、停止及重启由 systemd 服务管理。外部 MCP 工具使用显式配置的服务 `PATH`。
+
 ## 快速开始
 
 1. 启动 **Easy Local MCP**。

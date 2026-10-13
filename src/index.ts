@@ -267,7 +267,17 @@ async function main(){
     }=await import('./lifecycle.js');
 
     if(mode==='status'){
-      printStatus(await status());
+      const current=await status();
+      printStatus(current);
+      const {managedUserServiceState}=await import('./systemd-service.js');
+      const service=await managedUserServiceState();
+      console.log(service
+        ? 'Supervision: systemd user service ('+service.state
+          +', '+(current.status==='running'
+            ? service.active&&service.mainPid===current.pid
+              ? 'verified owner':'OWNERSHIP CONFLICT'
+            : 'no running Agent')+')'
+        : 'Supervision: direct / unmanaged');
       return;
     }
 
