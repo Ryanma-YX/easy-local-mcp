@@ -59,6 +59,7 @@ Easy Local MCP 基于 [daodao97/localmcp](https://github.com/daodao97/localmcp) 
 需要：
 
 - Node.js 22+
+- Linux 外部 MCP 进程运行需要 `setsid`（由 util-linux 或兼容软件包提供）
 - 构建桌面版需要 Rust stable
 - 构建 Windows 安装包需要 Visual Studio 2022 / MSVC 与 Windows SDK
 

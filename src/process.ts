@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 interface ManagedProcess {
   id: string;
@@ -14,18 +15,34 @@ interface ManagedProcess {
   running: boolean;
   exitCode: number | null;
   signal: NodeJS.Signals | null;
+  leaderStartTicks: string | null;
+}
+
+function linuxStartTicks(pid:number):string|null{
+  try{
+    const stat=readFileSync('/proc/'+pid+'/stat','utf8');
+    // Fields after the parenthesized command start at field 3. Field 22 is
+    // the process creation time in clock ticks since boot.
+    return stat.slice(stat.lastIndexOf(')')+2).trim().split(/\s+/)[19]??null;
+  }catch{
+    return null;
+  }
 }
 
 const MAX_BUFFER = 1024 * 1024;
 
 export class ProcessManager {
   private processes = new Map<string, ManagedProcess>();
+  private shuttingDown = false;
+  private cleanup?: Promise<void>;
 
   start(command: string, cwd: string) {
+    // An in-flight MCP request must not create a new orphan during shutdown.
+    if (this.shuttingDown) throw new Error('Process manager is shutting down');
     const env: NodeJS.ProcessEnv = {};
     for (const key of ['PATH','HOME','USER','TMPDIR','LANG','SHELL','SystemRoot']) if (process.env[key]) env[key] = process.env[key];
     const child = spawn(command, {cwd, shell: true, detached: process.platform !== 'win32', env, stdio: ['pipe','pipe','pipe'], windowsHide: process.platform === 'win32'});
-    const proc: ManagedProcess = {id: randomUUID(), child, command, cwd, stdout: '', stderr: '', stdoutOffset: 0, stderrOffset: 0, startedAt: new Date().toISOString(), running: true, exitCode: null, signal: null};
+    const proc: ManagedProcess = {id: randomUUID(), child, command, cwd, stdout: '', stderr: '', stdoutOffset: 0, stderrOffset: 0, startedAt: new Date().toISOString(), running: true, exitCode: null, signal: null, leaderStartTicks:process.platform==='linux'&&child.pid?linuxStartTicks(child.pid):null};
     const collect = (stream: 'stdout'|'stderr', chunk: Buffer) => {
       const text = chunk.toString('utf8');
       proc[stream] += text;
@@ -73,7 +90,11 @@ export class ProcessManager {
 
   stop(id: string) {
     const proc = this.mustGet(id);
-    if (!proc.running) return {processId: id, running: false, exitCode: proc.exitCode, signal: proc.signal};
+    if (!proc.running) {
+      // Stop any surviving background members even after the shell exited.
+      if (process.platform === 'linux') this.terminate(proc, false);
+      return {processId: id, running: false, exitCode: proc.exitCode, signal: proc.signal};
+    }
     this.terminate(proc, false);
     return {processId: id, stopping: true};
   }
@@ -82,18 +103,29 @@ export class ProcessManager {
     return [...this.processes.values()].map(proc => ({processId: proc.id, pid: proc.child.pid, command: proc.command, cwd: proc.cwd, startedAt: proc.startedAt, running: proc.running, exitCode: proc.exitCode, signal: proc.signal}));
   }
 
-  async close() {
+  close(): Promise<void> {
+    if (this.cleanup) return this.cleanup;
+    this.shuttingDown = true;
     const pending: Promise<void>[] = [];
     for (const proc of this.processes.values()) {
-      if (!proc.running) continue;
-      pending.push(this.waitForExit(proc));
+      // Linux shells can exit while descendants keep their original group
+      // alive. Other platforms keep their previous exited-shell behavior.
+      if (!proc.running && process.platform !== 'linux') continue;
+      if (proc.running) pending.push(this.waitForExit(proc));
       this.terminate(proc, true);
     }
-    await Promise.allSettled(pending);
+    this.cleanup = Promise.allSettled(pending).then(()=>{});
+    return this.cleanup;
   }
 
   private terminate(proc: ManagedProcess, force: boolean) {
     try {
+      if (process.platform === 'linux' && !proc.running && proc.child.pid) {
+        // A dead shell's PID can eventually be recycled. Do not send a
+        // process-group signal if that number now names a different leader.
+        const current=linuxStartTicks(proc.child.pid);
+        if(current!==null&&current!==proc.leaderStartTicks)return;
+      }
       if (process.platform === 'win32' && proc.child.pid) {
         const killer = spawn(
           'taskkill',

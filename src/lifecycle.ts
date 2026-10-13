@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { controlEndpoint } from './control-endpoint.js';
-import { listenWithSocketRecovery } from './socket-recovery.js';
+import { listenWithSocketRecovery, withStartupLock } from './socket-recovery.js';
 import { ensureControlSecret, getControlSecret } from './security.js';
 import {
   ensureRelayConfigured,
@@ -300,6 +300,11 @@ export async function startDesktopAgentInBackground(
 
 async function locked<T>(action:()=>Promise<T>):Promise<T>{
   await mkdir(stateDir,{recursive:true,mode:0o700});
+  // On Linux the kernel owns lock lifetime, even on SIGKILL, power loss,
+  // and PID reuse. The previous file lock is deliberately not consulted.
+  if(process.platform==='linux'){
+    return withStartupLock(lockFile,action,90000);
+  }
   const deadline=Date.now()+90000;
 
   while(true){

@@ -10,7 +10,7 @@ function isMissing(error:unknown){
 }
 
 /** Kernel-owned startup mutex: no stale filesystem lock or PID reuse. */
-async function withStartupLock<T>(socketFile:string,action:()=>Promise<T>):Promise<T>{
+export async function withStartupLock<T>(socketFile:string,action:()=>Promise<T>,waitMs=10000):Promise<T>{
   // Different path aliases can refer to the same Unix socket. Resolve only
   // its parent: the socket itself might not exist yet (or might be orphaned).
   const canonicalPath=join(await realpath(dirname(socketFile)),basename(socketFile));
@@ -19,7 +19,7 @@ async function withStartupLock<T>(socketFile:string,action:()=>Promise<T>):Promi
   // macOS uses a deterministic loopback port and fails closed on collision.
   const abstractAddress='\0localmcp-startup-'+hash;
   const port=30000+(Number.parseInt(hash.slice(0,8),16)%30000);
-  const deadline=Date.now()+10000;
+  const deadline=Date.now()+waitMs;
   // The mutex accepts no client protocol. Immediately close any unexpected
   // connection so lock.close() cannot be held indefinitely by a local client.
   const lock=createServer(socket=>socket.destroy());

@@ -418,7 +418,9 @@ function spawnLocal(){
         LOCALMCP_INTERNAL:'1',
         LOCALMCP_ZONE_ID:settings?.zoneId??''
       },
-      stdio:['ignore','ignore','inherit'],
+      // A live IPC channel ties this HTTP server to the Agent's lifetime.
+      // On SIGKILL the channel closes even though normal shutdown cannot run.
+      stdio:['ignore','ignore','inherit','ipc'],
       windowsHide:process.platform==='win32'
     }
   );

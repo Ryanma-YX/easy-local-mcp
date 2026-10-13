@@ -59,6 +59,7 @@ The desktop installer includes the required runtime. The target PC does not need
 Requirements:
 
 - Node.js 22+
+- Linux external MCP execution: `setsid` (provided by util-linux or an equivalent package)
 - Rust stable for the desktop app
 - Visual Studio 2022 / MSVC and Windows SDK for the Windows installer
 
