@@ -46,11 +46,6 @@ interface Settings {
 }
 
 await mkdir(stateDir,{recursive:true,mode:0o700});
-if(await zoneJoinCode()){
-  await disableAlwaysUnlocked('zone_join_staged');
-}
-await resetUnlockOnAgentStart();
-await auditSecurity('agent_start',{pid:process.pid});
 
 const pidFile=resolve(stateDir,'agent.pid');
 const workerFile=resolve(stateDir,'worker.json');
@@ -342,6 +337,16 @@ const closeControl=await serveControl(
     },
     rotate:rotateCredentials,
     reregister:reregisterDevice
+  },
+  async()=>{
+    // A duplicate must never alter the running agent's shared unlock state.
+    // This runs only after successful bind, while startup ownership is held
+    // and the control endpoint is not yet accepting operational requests.
+    if(await zoneJoinCode()){
+      await disableAlwaysUnlocked('zone_join_staged');
+    }
+    await resetUnlockOnAgentStart();
+    await auditSecurity('agent_start',{pid:process.pid});
   }
 );
 

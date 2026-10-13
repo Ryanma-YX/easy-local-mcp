@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { controlEndpoint } from './control-endpoint.js';
+import { listenWithSocketRecovery } from './socket-recovery.js';
 import { ensureControlSecret, getControlSecret } from './security.js';
 import {
   ensureRelayConfigured,
@@ -271,10 +272,6 @@ export async function startDesktopAgentInBackground(
 
     await initialize();
 
-    if(endpoint.socketFile){
-      await rm(endpoint.socketFile,{force:true});
-    }
-
     const log=await open(logFile,'a',0o600);
     let child:ReturnType<typeof spawn>|undefined;
 
@@ -388,10 +385,6 @@ export async function control(
         await ensureRelayConfigured();
         await initialize();
 
-        if(endpoint.socketFile){
-          await rm(endpoint.socketFile,{force:true});
-        }
-
         const log=await open(logFile,'a',0o600);
 
         try{
@@ -428,11 +421,18 @@ export async function control(
 
 export async function serveControl(
   getStatus:()=>Status|Promise<Status>,
-  handlers:ControlHandlers
+  handlers:ControlHandlers,
+  initialize:()=>Promise<void>=async()=>{}
 ){
-  const controlSecret=await ensureControlSecret();
-
+  let controlSecret='';
+  let acceptingRequests=false;
   const server=createServer({allowHalfOpen:true},socket=>{
+    // The socket can accept connections as soon as listen() succeeds. Never
+    // process a request until the owning agent has reset startup security.
+    if(!acceptingRequests){
+      socket.destroy();
+      return;
+    }
     let data='';
     let handled=false;
 
@@ -513,22 +513,21 @@ export async function serveControl(
     socket.on('end',handle);
   });
 
-  await new Promise<void>((ready,reject)=>{
-    server.once('error',reject);
-    server.listen(endpoint.address,ready);
+  await listenWithSocketRecovery(server,endpoint.address,endpoint.socketFile,async()=>{
+    if(endpoint.socketFile){
+      await chmod(endpoint.socketFile,0o600);
+    }
+    controlSecret=await ensureControlSecret();
+    await initialize();
+    acceptingRequests=true;
   });
-
-  if(endpoint.socketFile){
-    await chmod(endpoint.socketFile,0o600);
-  }
 
   return async()=>{
     await new Promise<void>((done,reject)=>{
       server.close(error=>error?reject(error):done());
     });
 
-    if(endpoint.socketFile){
-      await rm(endpoint.socketFile,{force:true});
-    }
+    // Node removes its own Unix socket during server.close().
+    // Never unlink a replacement agent's endpoint afterward.
   };
 }
