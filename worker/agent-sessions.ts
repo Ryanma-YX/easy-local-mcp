@@ -1,3 +1,4 @@
+import { OWNER_GRANT_TOOLS, validAgentSessionTools } from './agent-session-tool-groups';
 // MCP-facing Agent Session Approvals. Connector URL auth is independent of the
 // per-AI session grant. No OAuth, refresh token, or model-hidden credential.
 export interface SessionConnector {
@@ -10,14 +11,6 @@ export const SESSION_REQUEST_TOOL='request_agent_session';
 export const SESSION_STATUS_TOOL='get_agent_session_status';
 export const SESSION_TOKEN_ARGUMENT='agentSessionToken';
 
-const knownTools=new Set([
-  'workspace_info','list_workspaces','list_directory','workspace_tree',
-  'stat_path','find_files','search_files','read_file','read_file_lines',
-  'write_file','edit_file','apply_patch','create_directory','delete_path',
-  'move_path','list_mcp_servers','list_mcp_tools','call_mcp_tool',
-  'list_skills','read_skill','run_command','start_process','read_process',
-  'write_process','stop_process','list_processes'
-]);
 const uuid=(v:unknown):v is string=>typeof v==='string'
   && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 const randomSecret=()=>{
@@ -74,8 +67,8 @@ export function withSessionArgument(tool:Record<string,unknown>){
 }
 export function agentSessionTools(kind:'zone'|'device'){
   const requestProps:Record<string,unknown>={
-    tools:{type:'array',items:{type:'string'},minItems:1,maxItems:26,
-      description:'MCP tool names to request, or ["*"] for all enabled tools.'},
+    tools:{type:'array',items:{type:'string'},minItems:1,maxItems:OWNER_GRANT_TOOLS.length,
+      description:'MCP tool names to request, or ["*"] to request all enabled tools. The owner UI chooses explicit currently visible tools at approval time; backend wildcard grants remain supported separately.'},
     note:{type:'string',maxLength:160,description:'Brief purpose shown to the owner.'}
   };
   if(kind==='zone'){
@@ -127,10 +120,7 @@ export async function handleAgentSessionTool(
     || (scope!=='devices'&&deviceIds.length!==0)
     || deviceIds.some(id=>!uuid(id)||!currentDevices.includes(id))
     || new Set(deviceIds).size!==deviceIds.length
-    || !Array.isArray(tools)||!tools.length||tools.length>26
-    || tools.some(t=>typeof t!=='string'||(t!=='*'&&!knownTools.has(t)))
-    || (tools.includes('*')&&tools.length!==1)
-    || new Set(tools).size!==tools.length
+    || !validAgentSessionTools(tools)
     || typeof note!=='string'||note.length>160){
     return toolError(rpcId,'Invalid access scope, tools or purpose');
   }

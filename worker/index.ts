@@ -490,7 +490,7 @@ export default {
       );
     }
 
-    const sessionAdminMatch=/^\/api\/admin\/agent-sessions\/([0-9a-f-]{36})\/(approve|reject|revoke)$/.exec(url.pathname);
+    const sessionAdminMatch=/^\/api\/admin\/agent-sessions\/([0-9a-f-]{36})\/(approve|reject|revoke|edit|extend)$/.exec(url.pathname);
     if(sessionAdminMatch&&request.method==='POST'){
       if(!sameOriginAllowed(request,url))return json({error:'Origin not allowed'},403);
       if(!await relayAdminAuthorized(request,env))return json({error:'Authentication required'},401);
@@ -506,7 +506,7 @@ export default {
         new Request(`https://admin.internal/agent-sessions/${sessionAdminMatch[2]}`,{
           method:'POST',
           headers:{'x-localmcp-internal':'1','Content-Type':'application/json'},
-          body:JSON.stringify({id:sessionAdminMatch[1],approvedHours:body.approvedHours,idleHours:body.idleHours})
+          body:JSON.stringify({id:sessionAdminMatch[1],approvedHours:body.approvedHours,idleHours:body.idleHours,approvedTools:body.approvedTools})
         })
       );
     }

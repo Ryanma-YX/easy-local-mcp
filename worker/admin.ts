@@ -1,4 +1,5 @@
 import { uiI18nClient } from '../src/ui-i18n';
+import { OWNER_TOOL_GROUPS } from './agent-session-tool-groups';
 
 const styles=`
 :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;background:#f5f7fb}
@@ -28,6 +29,14 @@ button:disabled{cursor:not-allowed;opacity:.58}
 .session-actions{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap}
 .session-actions label{margin:0}
 .session-actions input{max-width:100px}
+.grant-editor{flex-basis:100%;min-width:280px;border:1px solid #dce3f0;border-radius:9px;padding:9px}
+.grant-editor summary{cursor:pointer;font-weight:700;color:#34445d;font-size:13px}
+.grant-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.grant-actions button{font-size:12px;padding:6px 9px}
+.grant-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:5px;max-height:240px;overflow:auto;margin-top:8px}
+.grant-grid label{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:500;margin:0}
+.grant-grid input{width:auto;max-width:none}
+.grant-preview{font-size:12px;color:#42516a;overflow-wrap:anywhere;margin-top:8px}
 .device{display:grid;grid-template-columns:minmax(180px,1fr) minmax(160px,1fr) auto;gap:12px;align-items:center;padding:14px 0;border-top:1px solid #edf0f5}
 .device:first-child{border-top:0}
 .name{font-weight:800}
@@ -288,6 +297,7 @@ async function api(path,options={}){
   return body;
 }
 const jsonHeaders={'Content-Type':'application/json'};
+const ownerToolGroups=${JSON.stringify(OWNER_TOOL_GROUPS)};
 
 async function writeClipboard(value){
   if(navigator.clipboard&&window.isSecureContext){
@@ -576,6 +586,66 @@ $('rotateConnector').onclick=()=>{
   });
 };
 
+const currentToolNames=[...new Set(Object.values(ownerToolGroups).flat())];
+function compactTools(tools){
+  if(tools.includes('*'))return 'Dynamic wildcard (*) — future enabled tools included';
+  const remaining=new Set(tools);
+  if(currentToolNames.length&&currentToolNames.every(t=>remaining.has(t))){
+    return 'All current ('+currentToolNames.length+' tools)';
+  }
+  const parts=[];
+  for(const [name,members] of Object.entries(ownerToolGroups)){
+    if(members.every(t=>remaining.has(t))){
+      parts.push(name);
+      for(const tool of members)remaining.delete(tool);
+    }
+  }
+  parts.push(...remaining);
+  return parts.join(', ');
+}
+function toolDetails(tools){
+  const details=document.createElement('details');
+  const summary=document.createElement('summary');
+  summary.textContent=compactTools(tools);
+  const list=document.createElement('div');
+  list.className='meta';
+  list.textContent=tools.join(', ');
+  details.append(summary,list);
+  return details;
+}
+function toolGrantEditor(initial){
+  const details=document.createElement('details');
+  details.className='grant-editor';
+  const summary=document.createElement('summary');
+  summary.textContent='Choose permitted tools';
+  details.appendChild(summary);
+  let selected=new Set(initial.includes('*')?currentToolNames:initial);
+  const buttons=document.createElement('div');buttons.className='grant-actions';
+  const grid=document.createElement('div');grid.className='grant-grid';
+  const preview=document.createElement('div');preview.className='grant-preview';
+  const inputs=[];
+  const refresh=()=>{
+    for(const input of inputs)input.checked=selected.has(input.value);
+    preview.textContent=compactTools([...selected])||'Select at least one tool';
+  };
+  const add=(label,fn)=>{
+    const button=document.createElement('button');button.type='button';
+    button.className='secondary';button.textContent=label;
+    button.onclick=()=>{fn();refresh();};buttons.appendChild(button);
+  };
+  add('Requested/granted only',()=>selected=new Set(initial.includes('*')?currentToolNames:initial));
+  for(const [name,members] of Object.entries(ownerToolGroups))add('Add '+name,()=>members.forEach(t=>selected.add(t)));
+  add('All current tools',()=>selected=new Set(currentToolNames));
+  add('Clear',()=>selected.clear());
+  for(const name of currentToolNames){
+    const input=document.createElement('input');input.type='checkbox';input.value=name;
+    const label=document.createElement('label');label.append(input,document.createTextNode(name));
+    input.onchange=()=>{if(input.checked)selected.add(name);else selected.delete(name);refresh();};
+    grid.append(label);inputs.push(input);
+  }
+  details.append(buttons,grid,preview);refresh();
+  return {details,get:()=>[...selected]};
+}
 async function loadAgentSessions(){
   const data=await api('/api/admin/agent-sessions');
   const host=$('agentSessions');
@@ -586,6 +656,10 @@ async function loadAgentSessions(){
     host.appendChild(message);
     return;
   }
+  const notice=document.createElement('p');
+  notice.className='meta';
+  notice.textContent='Group approvals cover the tools in that group today; new tools added later are not granted automatically.';
+  host.appendChild(notice);
   for(const session of data.sessions){
     const row=document.createElement('div');
     row.className='session-row';
@@ -600,8 +674,11 @@ async function loadAgentSessions(){
     scope.className='meta';
     scope.textContent='Scope: '+(session.scope==='zone/all'?'ENTIRE ZONE (including devices enrolled in the future)':session.scope)
       +(session.scope==='devices'?' ('+session.devices.join(', ')+')':'')
-      +' · Tools: '+session.tools.join(', ');
+      +' · Requested tools: '+compactTools(session.requestedTools||session.tools)
+      +(session.state==='approved'?' · Granted tools: '+compactTools(session.tools):'');
     info.appendChild(scope);
+    const requestedDetails=toolDetails(session.requestedTools||session.tools);
+    info.appendChild(requestedDetails);
     // The owner, not the AI, determines the approval lifetime.
     // A 24h idle limit has no effect on a shorter absolute approval.
     const idleRelevant=Number.isInteger(session.approvedHours)
@@ -664,6 +741,76 @@ async function loadAgentSessions(){
       updateIdleVisibility();
       actions.appendChild(idleLabel);
 
+      // Requested scopes/devices are fixed; only an independently signed-in
+      // owner may explicitly widen or narrow the allowed tool operations.
+      // Defaults remain exactly the AI request (least privilege).
+      const originallyRequested=session.requestedTools||session.tools;
+      const toolNames=[...new Set(Object.values(ownerToolGroups).flat())];
+      // Legacy MCP requests may ask for '*'; this now expands to a fixed
+      // list before approval. No UI operation submits an open-ended wildcard.
+      const requestedSelection=()=>new Set(
+        originallyRequested.includes('*')?toolNames:originallyRequested
+      );
+      let selectedTools=requestedSelection();
+      const editor=document.createElement('details');
+      editor.className='grant-editor';
+      const summary=document.createElement('summary');
+      summary.textContent='Choose permitted tools (defaults to requested)';
+      editor.appendChild(summary);
+      const presets=document.createElement('div');
+      presets.className='grant-actions';
+      const checklist=document.createElement('div');
+      checklist.className='grant-grid';
+      const preview=document.createElement('div');
+      preview.className='grant-preview';
+      const checkboxes=[];
+      const refreshSelection=()=>{
+        const all=toolNames.every(name=>selectedTools.has(name));
+        for(const checkbox of checkboxes){
+          checkbox.checked=selectedTools.has(checkbox.value);
+        }
+        preview.textContent='Owner will grant: '
+          +(all?'ALL '+toolNames.length+' currently known tools (future tools NOT included)'
+            :([...selectedTools].join(', ')||'NONE — choose at least one'));
+        if(originallyRequested[0]!=='*'
+          && [...selectedTools].some(name=>!originallyRequested.includes(name))){
+          preview.textContent+=' · This grants MORE tools than the AI requested.';
+        }
+      };
+      const presetButton=(label,run)=>{
+        const button=document.createElement('button');
+        button.type='button';
+        button.className='secondary';
+        button.textContent=label;
+        button.onclick=()=>{run();refreshSelection();};
+        presets.appendChild(button);
+      };
+      presetButton('Requested only',()=>{selectedTools=requestedSelection();});
+      for(const [group,names] of Object.entries(ownerToolGroups)){
+        presetButton('Add '+group,()=>{
+          for(const name of names)selectedTools.add(name);
+        });
+      }
+      presetButton('All current tools',()=>{selectedTools=new Set(toolNames);});
+      presetButton('Clear',()=>{selectedTools.clear();});
+      for(const name of toolNames){
+        const checkbox=document.createElement('input');
+        checkbox.type='checkbox';
+        checkbox.value=name;
+        const label=document.createElement('label');
+        label.append(checkbox,document.createTextNode(name));
+        checkbox.onchange=()=>{
+          if(checkbox.checked)selectedTools.add(name);
+          else selectedTools.delete(name);
+          refreshSelection();
+        };
+        checklist.appendChild(label);
+        checkboxes.push(checkbox);
+      }
+      editor.append(presets,checklist,preview);
+      refreshSelection();
+      actions.appendChild(editor);
+
       const approve=document.createElement('button');
       approve.textContent='Approve';
       approve.onclick=()=>{
@@ -675,9 +822,15 @@ async function loadAgentSessions(){
         if(idleHours!==24&&idleHours!==48){
           show('Invalid inactivity timeout',true);return;
         }
+        const approvedTools=[...selectedTools];
+        if(!approvedTools.length){
+          show('Select at least one permitted tool',true);return;
+        }
         withOperation('Approving Agent Session…',async()=>{
           await api('/api/admin/agent-sessions/'+session.id+'/approve',{
-            method:'POST',headers:jsonHeaders,body:JSON.stringify({approvedHours:duration,idleHours})
+            method:'POST',headers:jsonHeaders,body:JSON.stringify({
+              approvedHours:duration,idleHours,approvedTools
+            })
           });
           await loadAgentSessions();
           show('Agent Session approved for '+duration+' hours.');
@@ -694,6 +847,40 @@ async function loadAgentSessions(){
       };
       actions.append(approve,reject);
     }else if(session.state==='approved'){
+      const permissionEditor=toolGrantEditor(session.tools);
+      actions.appendChild(permissionEditor.details);
+      const edit=document.createElement('button');edit.className='secondary';
+      edit.textContent='Edit permissions';
+      edit.onclick=()=>{
+        const approvedTools=permissionEditor.get();
+        if(!approvedTools.length){show('Choose at least one tool',true);return;}
+        withOperation('Editing Agent Session…',async()=>{
+          await api('/api/admin/agent-sessions/'+session.id+'/edit',{
+            method:'POST',headers:jsonHeaders,body:JSON.stringify({approvedTools})
+          });
+          await loadAgentSessions();show('Permissions updated for future calls.');
+        });
+      };
+      const extension=document.createElement('label');
+      extension.textContent='New expiry from now (1–720 hours)';
+      const hours=document.createElement('input');hours.type='number';
+      hours.min='1';hours.max='720';hours.step='1';hours.value='1';
+      extension.appendChild(hours);
+      const extend=document.createElement('button');extend.className='secondary';
+      extend.textContent='Extend';
+      extend.onclick=()=>{
+        const approvedHours=Number(hours.value);
+        if(!Number.isInteger(approvedHours)||approvedHours<1||approvedHours>720){
+          show('Extension must be between 1 and 720 hours',true);return;
+        }
+        withOperation('Extending Agent Session…',async()=>{
+          await api('/api/admin/agent-sessions/'+session.id+'/extend',{
+            method:'POST',headers:jsonHeaders,body:JSON.stringify({approvedHours})
+          });
+          await loadAgentSessions();show('Session expiry updated from now.');
+        });
+      };
+      actions.append(edit,extension,extend);
       const revoke=document.createElement('button');
       revoke.className='danger';revoke.textContent='Revoke Session';
       revoke.onclick=()=>{

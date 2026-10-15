@@ -1,3 +1,4 @@
+import { validAgentSessionTools } from './agent-session-tool-groups';
 // Persistent, per-AI owner-approved session grants. The RelayAdmin DO is the
 // only authority; model-visible secrets are never persisted in plaintext.
 export interface AgentSessionRecord {
@@ -9,6 +10,7 @@ export interface AgentSessionRecord {
   scope:'device'|'devices'|'zone/all';
   devices:string[];
   tools:string[];
+  requestedTools?:string[]; // Original AI request, immutable after owner approves.
   requestedHours?:number; // Legacy records only; never caps owner approval.
   idleHours:24|48;
   note:string;
@@ -47,6 +49,9 @@ export function effectiveState(record:AgentSessionRecord){
 }
 function publicRecord(record:AgentSessionRecord){
   const {tokenHash,connectorHash,...rest}=record;
+  // Preserve exact owner-approved permission representation, including a
+  // deliberately granted '*' wildcard. The UI All shortcut sends explicit
+  // names, but a wildcard is still a supported backend authorization value.
   return {...rest,state:effectiveState(record)};
 }
 function sameConnector(record:AgentSessionRecord,body:Record<string,unknown>){
@@ -95,8 +100,7 @@ export async function handleAgentSessionStorage(
       || new Set(devices).size!==devices.length
       || (scope==='devices'&&devices.length===0)
       || (scope!=='devices'&&devices.length!==0)
-      || !Array.isArray(tools)||tools.length<1||tools.length>26
-      || tools.some(t=>typeof t!=='string'||t.length>60)
+      || !validAgentSessionTools(tools)
       || typeof note!=='string'||note.length>160){
       return json({error:'Invalid session access scope or request'},400);
     }
@@ -106,7 +110,7 @@ export async function handleAgentSessionStorage(
       connectorKind:connectorKind as 'device'|'zone',
       connectorId:connectorId as string,connectorHash:connectorHash as string,
       scope:scope as AgentSessionRecord['scope'],devices:devices as string[],
-      tools:tools as string[],
+      tools:tools as string[],requestedTools:tools as string[],
       idleHours:24,note:note as string,
       createdAt:new Date(now).toISOString(),
       pendingUntil:new Date(now+15*60_000).toISOString(),state:'pending'
@@ -184,7 +188,7 @@ export async function handleAgentSessionStorage(
       return json({id:record.id,pendingUntil:record.pendingUntil,state:'pending'},201);
     });
   }
-  if(!['status','authorize','approve','reject','revoke'].includes(action)){
+  if(!['status','authorize','approve','reject','revoke','edit','extend'].includes(action)){
     return json({error:'Unknown session operation'},404);
   }
   if(!uuid(body.id))return json({error:'Invalid session ID'},400);
@@ -222,6 +226,35 @@ export async function handleAgentSessionStorage(
       return json({authorized:true,id:record.id,hardUntil:record.hardUntil});
     }
 
+    if(action==='edit'||action==='extend'){
+      // Never revive an expired or revoked token, even if its stored state
+      // still says 'approved'. Each operation is atomic in the owner DO.
+      if(effectiveState(record)!=='approved'){
+        return json({error:'Only active approved sessions may be changed'},409);
+      }
+      if(action==='edit'){
+        if(!validAgentSessionTools(body.approvedTools)){
+          return json({error:'Invalid owner-selected tool grant'},400);
+        }
+        record.tools=[...body.approvedTools];
+      }else{
+        const hours=body.approvedHours;
+        if(!Number.isInteger(hours)||Number(hours)<1||Number(hours)>720){
+          return json({error:'Extension must be 1 to 720 hours from now'},400);
+        }
+        const now=Date.now();
+        record.approvedHours=hours as number;
+        record.hardUntil=new Date(now+(hours as number)*60*60_000).toISOString();
+        // Extension resets inactivity to a fresh owner-selected window,
+        // capped by the newly selected hard deadline. No token rotation.
+        record.idleUntil=new Date(Math.min(
+          now+record.idleHours*60*60_000,Date.parse(record.hardUntil)
+        )).toISOString();
+      }
+      await tx.put(key(id),record);
+      return json({session:publicRecord(record)});
+    }
+
     if(action==='approve'){
       if(effectiveState(record)!=='pending'){
         return json({error:'Session is not pending'},409);
@@ -247,10 +280,20 @@ export async function handleAgentSessionStorage(
       if(idleHours!==24&&idleHours!==48){
         return json({error:'Inactivity limit must be 24 or 48 hours'},400);
       }
+      // Owner may intentionally broaden or narrow tool access. This path is
+      // available ONLY behind Relay Admin authentication, never over MCP.
+      // Scope and device coverage do not change. Old clients/approvals remain
+      // compatible when approvedTools is omitted.
+      const approvedTools=body.approvedTools===undefined?record.tools:body.approvedTools;
+      if(!validAgentSessionTools(approvedTools)){
+        return json({error:'Invalid owner-selected tool grant'},400);
+      }
       const now=Date.now();
       record.state='approved';
       record.approvedHours=hours as number;
       record.idleHours=idleHours;
+      record.requestedTools??=[...record.tools];
+      record.tools=[...approvedTools];
       record.approvedAt=new Date(now).toISOString();
       record.hardUntil=new Date(now+(hours as number)*60*60_000).toISOString();
       record.idleUntil=new Date(now+Math.min(hours as number,record.idleHours)*60*60_000).toISOString();

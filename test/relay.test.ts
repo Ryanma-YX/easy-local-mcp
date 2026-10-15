@@ -1231,7 +1231,8 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
   const approveSession=await fetch(
     origin+'/api/admin/agent-sessions/'+pendingSession.sessionId+'/approve',{
       method:'POST',headers:{Cookie:remoteAdminCookie,'Content-Type':'application/json'},
-      body:JSON.stringify({approvedHours:12,idleHours:48})
+      body:JSON.stringify({approvedHours:12,idleHours:48,
+        approvedTools:['write_file','read_file','edit_file']})
     }
   );
   assert.equal(approveSession.status,200,await approveSession.text());
@@ -1243,6 +1244,9 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
   );
   assert.equal(selected.approvedHours,12,'Owner selects approval hours');
   assert.equal(selected.idleHours,48,'Owner-selected inactivity override reaches storage');
+  assert.deepEqual(selected.requestedTools,['write_file','read_file']);
+  assert.deepEqual(selected.tools,['write_file','read_file','edit_file'],
+    'Owner grant may explicitly include a tool the AI did not request');
   assert.equal(selected.requestedHours,undefined,'New AI requests do not choose duration');
   const sessionWrite:any=await zoneClient.callTool({
     name:'write_file',arguments:{device:'Zone Worker',path:'session-authorized.txt',
