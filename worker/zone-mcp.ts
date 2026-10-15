@@ -1,4 +1,6 @@
+import { agentSessionTools, withSessionArgument, handleAgentSessionTool, approvedAgentSession, SESSION_TOKEN_ARGUMENT } from './agent-sessions';
 interface ZoneMcpEnv {
+  ADMIN:DurableObjectNamespace;
   RELAY:DurableObjectNamespace;
   ZONE:DurableObjectNamespace;
 }
@@ -123,12 +125,14 @@ async function forward(
   env:ZoneMcpEnv,
   deviceId:string,
   body:string,
-  protocolVersion:string|null
+  protocolVersion:string|null,
+  sessionApproved=false
 ){
   const headers=new Headers({
     'Content-Type':'application/json',
     'Accept':'application/json, text/event-stream',
-    'x-localmcp-internal':'1'
+    'x-localmcp-internal':'1',
+    'x-localmcp-session-approved':sessionApproved?'1':'0'
   });
 
   if(protocolVersion){
@@ -401,6 +405,7 @@ export async function handleZoneMcp(
       rpc.id,
       {
         tools:[
+          ...agentSessionTools('zone'),
           {
             name:'list_devices',
             description:'List devices in this LocalMCP Zone, including online state and platform metadata.',
@@ -410,7 +415,7 @@ export async function handleZoneMcp(
               additionalProperties:false
             }
           },
-          ...routed
+          ...routed.map(tool=>withSessionArgument(tool))
         ]
       }
     );
@@ -431,6 +436,12 @@ export async function handleZoneMcp(
       && !Array.isArray(params.arguments)
         ? params.arguments as Record<string,unknown>
         : {};
+
+    const connector={kind:'zone' as const,id:zoneId,secret:token};
+    const sessionControl=await handleAgentSessionTool(
+      env,connector,name,args,rpc.id,zoneContext.devices.map(d=>d.deviceId)
+    );
+    if(sessionControl)return sessionControl;
 
     if(name==='list_devices'){
       return rpcResult(
@@ -471,8 +482,12 @@ export async function handleZoneMcp(
       );
     }
 
+    const approved=await approvedAgentSession(
+      env,connector,args[SESSION_TOKEN_ARGUMENT],selected.device.deviceId,name
+    );
     const forwardedArgs={...args};
     delete forwardedArgs.device;
+    delete forwardedArgs[SESSION_TOKEN_ARGUMENT];
 
     const forwardedBody=JSON.stringify({
       jsonrpc:'2.0',
@@ -488,7 +503,8 @@ export async function handleZoneMcp(
       env,
       selected.device.deviceId,
       forwardedBody,
-      protocolVersion
+      protocolVersion,
+      approved
     );
 
     const responseText=await response.text();

@@ -429,6 +429,26 @@ async function main(){
     let mutationGate=Promise.resolve();
 
     app.post(['/mcp','/mcp/:token'],async(req,res)=>{
+      // Only the Agent parent can mark a Worker-validated Session as approved.
+      // The bearer for local HTTP access is a DIFFERENT secret from this key.
+      const gateKey=process.env.LOCALMCP_RELAY_GATE_KEY;
+      let remote:undefined|{approved:boolean};
+      if(gateKey){
+        const provided=typeof req.headers['x-localmcp-relay-gate']==='string'
+          ?req.headers['x-localmcp-relay-gate']:'';
+        // Local clients that already hold the Agent's private loopback token
+        // keep the preexisting OS-user authorization path. Only the Agent
+        // parent sets this separate, secret, relay-origin marker.
+        if(provided){
+          const expected=Buffer.from(gateKey);
+          const supplied=Buffer.from(provided);
+          if(supplied.length!==expected.length||!timingSafeEqual(supplied,expected)){
+            res.sendStatus(403);
+            return;
+          }
+          remote={approved:req.headers['x-localmcp-session-approved']==='1'};
+        }
+      }
       let release=()=>{};
 
       if(!requestCanRunDuringMutation(req.body)){
@@ -452,7 +472,8 @@ async function main(){
           active.mcp,
           active.skills,
           processes,
-          ()=>runtime
+          ()=>runtime,
+          remote
         );
 
         transport=new StreamableHTTPServerTransport({

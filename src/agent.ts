@@ -373,6 +373,8 @@ process.on('unhandledRejection',error=>{
 await loadSettings();
 
 const localToken=randomBytes(32).toString('hex');
+// Separate ephemeral relay header key; never exposed in MCP tool arguments.
+const relayGateKey=randomBytes(32).toString('hex');
 
 async function findFreePort(){
   if(process.env.LOCALMCP_AGENT_PORT){
@@ -410,6 +412,7 @@ function spawnLocal(){
         ...process.env,
         LOCALMCP_PORT:String(port),
         LOCALMCP_TOKEN:localToken,
+        LOCALMCP_RELAY_GATE_KEY:relayGateKey,
         LOCALMCP_INTERNAL:'1',
         LOCALMCP_ZONE_ID:settings?.zoneId??''
       },
@@ -737,6 +740,7 @@ if(!localReady||closing){
         const data=complete.value as {
           body:string;
           protocolVersion?:string;
+          sessionApproved?:boolean;
         };
 
         if(
@@ -754,7 +758,9 @@ if(!localReady||closing){
           const headers:Record<string,string>={
             'Content-Type':'application/json',
             'Accept':'application/json, text/event-stream',
-            Authorization:`Bearer ${localToken}`
+            Authorization:`Bearer ${localToken}`,
+            'x-localmcp-relay-gate':relayGateKey,
+            'x-localmcp-session-approved':data.sessionApproved===true?'1':'0'
           };
 
           if(data.protocolVersion){

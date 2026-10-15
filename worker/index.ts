@@ -9,6 +9,7 @@ import {
   registerZone
 } from './admin-session';
 import { handleZoneMcp } from './zone-mcp';
+import { agentSessionTools, withSessionArgument, handleAgentSessionTool, approvedAgentSession, SESSION_TOKEN_ARGUMENT } from './agent-sessions';
 import { homePage } from './home';
 export { RelayAdmin } from './relay-admin';
 export { ZoneManager } from './zone';
@@ -314,6 +315,74 @@ async function zoneInfo(
   });
 }
 
+async function routeDeviceMcp(
+  env:Env,
+  deviceId:string,
+  credential:string,
+  body:string,
+  version:string|null
+):Promise<Response>{
+  // Session tools are handled at the edge. Validate the actual device MCP
+  // credential before revealing session state or allowing requests.
+  const valid=await relay(env,deviceId).fetch(new Request(
+    'https://relay.internal/authorize-mcp',{
+      method:'POST',headers:{'x-localmcp-internal':'1','x-localmcp-mcp-token':credential}
+    }
+  ));
+  if(!valid.ok)return new Response(null,{status:404});
+
+  const rpc=JSON.parse(body) as {
+    id?:string|number|null;
+    method?:unknown;
+    params?:{name?:unknown;arguments?:Record<string,unknown>};
+  };
+  if(!rpc||typeof rpc!=='object'||Array.isArray(rpc)){
+    return json({error:'Invalid MCP request'},400);
+  }
+  const connector={kind:'device' as const,id:deviceId,secret:credential};
+  const name=typeof rpc.params?.name==='string'?rpc.params.name:'';
+  const args=rpc.params?.arguments&&typeof rpc.params.arguments==='object'
+    && !Array.isArray(rpc.params.arguments)?rpc.params.arguments:{};
+  if(rpc.method==='tools/call'){
+    const control=await handleAgentSessionTool(
+      env,connector,name,args,rpc.id,[deviceId]
+    );
+    if(control)return control;
+  }
+  const approved=rpc.method==='tools/call'
+    ?await approvedAgentSession(env,connector,args[SESSION_TOKEN_ARGUMENT],deviceId,name)
+    :false;
+  if(rpc.method==='tools/call'){
+    const cleanArgs={...args};
+    delete cleanArgs[SESSION_TOKEN_ARGUMENT];
+    body=JSON.stringify({...rpc,params:{...rpc.params,arguments:cleanArgs}});
+  }
+  const headers=new Headers({
+    'Content-Type':'application/json',
+    'Accept':'application/json, text/event-stream',
+    'x-localmcp-mcp-token':credential,
+    'x-localmcp-session-approved':approved?'1':'0'
+  });
+  if(version)headers.set('MCP-Protocol-Version',version);
+  const response=await relay(env,deviceId).fetch(new Request(
+    'https://relay.internal/mcp',{method:'POST',headers,body}
+  ));
+  if(rpc.method!=='tools/list'||!response.ok)return response;
+  try{
+    const payload=await response.clone().json() as {
+      result?:{tools?:Array<Record<string,unknown>>};
+    };
+    if(!Array.isArray(payload.result?.tools))return response;
+    return Response.json({
+      ...payload,
+      result:{...payload.result,tools:[
+        ...agentSessionTools('device'),
+        ...payload.result!.tools!.map(withSessionArgument)
+      ]}
+    },{status:response.status,headers:{'Cache-Control':'no-store'}});
+  }catch{return response;}
+}
+
 export default {
   async fetch(request:Request,env:Env):Promise<Response>{
     const url=new URL(request.url);
@@ -408,6 +477,37 @@ export default {
         session.authenticated
           ? {authenticated:true,configured:true,expiresAt:session.expiresAt}
           : {authenticated:false,configured:true}
+      );
+    }
+
+    if(url.pathname==='/api/admin/agent-sessions'&&request.method==='GET'){
+      if(!sameOriginAllowed(request,url))return json({error:'Origin not allowed'},403);
+      if(!await relayAdminAuthorized(request,env))return json({error:'Authentication required'},401);
+      return env.ADMIN.get(env.ADMIN.idFromName('relay-admin')).fetch(
+        new Request('https://admin.internal/agent-sessions/list',{
+          headers:{'x-localmcp-internal':'1'}
+        })
+      );
+    }
+
+    const sessionAdminMatch=/^\/api\/admin\/agent-sessions\/([0-9a-f-]{36})\/(approve|reject|revoke)$/.exec(url.pathname);
+    if(sessionAdminMatch&&request.method==='POST'){
+      if(!sameOriginAllowed(request,url))return json({error:'Origin not allowed'},403);
+      if(!await relayAdminAuthorized(request,env))return json({error:'Authentication required'},401);
+      let body:Record<string,unknown>={};
+      try{
+        const parsed:unknown=JSON.parse(await bodyText(request,1024)||'{}');
+        if(!parsed||typeof parsed!=='object'||Array.isArray(parsed)){
+          return json({error:'Invalid request'},400);
+        }
+        body=parsed as Record<string,unknown>;
+      }catch{return json({error:'Invalid request'},400);}
+      return env.ADMIN.get(env.ADMIN.idFromName('relay-admin')).fetch(
+        new Request(`https://admin.internal/agent-sessions/${sessionAdminMatch[2]}`,{
+          method:'POST',
+          headers:{'x-localmcp-internal':'1','Content-Type':'application/json'},
+          body:JSON.stringify({id:sessionAdminMatch[1],approvedHours:body.approvedHours,idleHours:body.idleHours})
+        })
       );
     }
 
@@ -1352,27 +1452,9 @@ export default {
         );
       }
 
-      const headers=new Headers({
-        'Content-Type':'application/json',
-        'Accept':'application/json, text/event-stream',
-        'x-localmcp-mcp-token':mcpMatch[2]
-      });
-
-      const version=request.headers.get('MCP-Protocol-Version');
-
-      if(version){
-        headers.set('MCP-Protocol-Version',version);
-      }
-
-      return relay(env,mcpMatch[1]).fetch(
-        new Request(
-          'https://relay.internal/mcp',
-          {
-            method:'POST',
-            headers,
-            body
-          }
-        )
+      return routeDeviceMcp(
+        env,mcpMatch[1],mcpMatch[2],body,
+        request.headers.get('MCP-Protocol-Version')
       );
     }
 
@@ -1507,6 +1589,17 @@ export class McpRelay {
       return json({
         online:this.ctx.getWebSockets('agent').length>0
       });
+    }
+
+    if(
+      url.pathname==='/authorize-mcp'
+      && request.method==='POST'
+      && request.headers.get('x-localmcp-internal')==='1'
+    ){
+      const expected=await this.ctx.storage.get<string>('mcpHash');
+      const current=request.headers.get('x-localmcp-mcp-token')||'';
+      if(!await authorized(current,expected))return new Response(null,{status:404});
+      return json({ok:true});
     }
 
     if(
@@ -1772,7 +1865,9 @@ export class McpRelay {
             id,
             {
               body,
-              protocolVersion:request.headers.get('MCP-Protocol-Version')
+              protocolVersion:request.headers.get('MCP-Protocol-Version'),
+              sessionApproved:request.headers.get('x-localmcp-session-approved')==='1'
+                && (internal||!legacy)
             }
           )
         ){

@@ -22,6 +22,12 @@ button:disabled{cursor:not-allowed;opacity:.58}
 .zone{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:14px 0;border-top:1px solid #edf0f5}
 .zone:first-child{border-top:0}
 .zone-actions{display:flex;gap:8px;flex-wrap:wrap}
+.session-row{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;border-top:1px solid #edf0f5;padding:13px 0;flex-wrap:wrap}
+.session-row:first-child{border-top:0}
+.session-info{flex:1;min-width:230px;overflow-wrap:anywhere}
+.session-actions{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap}
+.session-actions label{margin:0}
+.session-actions input{max-width:100px}
 .device{display:grid;grid-template-columns:minmax(180px,1fr) minmax(160px,1fr) auto;gap:12px;align-items:center;padding:14px 0;border-top:1px solid #edf0f5}
 .device:first-child{border-top:0}
 .name{font-weight:800}
@@ -170,6 +176,17 @@ export function adminPage(){
 </div>
 <button id="logout" class="secondary">Sign Out</button>
 </div>
+
+<section class="card" id="agentSessionsPanel">
+<div class="topbar">
+<div>
+<h2>Agent Session Approvals</h2>
+<p>AI agents request access to tools and devices. You choose how long approval lasts. These are separate from global Remote Unlock.</p>
+</div>
+<button id="refreshAgentSessions" class="secondary">Refresh</button>
+</div>
+<div id="agentSessions"><p>Loading Agent Sessions...</p></div>
+</section>
 
 <section class="card">
 <h2>Create Zone</h2>
@@ -559,6 +576,141 @@ $('rotateConnector').onclick=()=>{
   });
 };
 
+async function loadAgentSessions(){
+  const data=await api('/api/admin/agent-sessions');
+  const host=$('agentSessions');
+  host.textContent='';
+  if(!data.sessions.length){
+    const message=document.createElement('p');
+    message.textContent='No Agent Session requests yet.';
+    host.appendChild(message);
+    return;
+  }
+  for(const session of data.sessions){
+    const row=document.createElement('div');
+    row.className='session-row';
+    const info=document.createElement('div');
+    info.className='session-info';
+    const title=document.createElement('div');
+    title.className='name';
+    title.textContent=(session.connectorKind==='zone'?'Zone ':'Device ')
+      +session.connectorId+' · '+session.state.toUpperCase();
+    info.appendChild(title);
+    const scope=document.createElement('div');
+    scope.className='meta';
+    scope.textContent='Scope: '+(session.scope==='zone/all'?'ENTIRE ZONE (including devices enrolled in the future)':session.scope)
+      +(session.scope==='devices'?' ('+session.devices.join(', ')+')':'')
+      +' · Tools: '+session.tools.join(', ');
+    info.appendChild(scope);
+    // The owner, not the AI, determines the approval lifetime.
+    // A 24h idle limit has no effect on a shorter absolute approval.
+    const idleRelevant=Number.isInteger(session.approvedHours)
+      &&session.approvedHours>session.idleHours;
+    const identity=document.createElement('div');
+    identity.className='meta';
+    identity.textContent='Session ID: '+session.id
+      +(session.approvedHours?' · Granted '+session.approvedHours+'h':' · Duration chosen by owner')
+      +(idleRelevant?' · Idle '+session.idleHours+'h':'')
+      +' · '+new Date(session.createdAt).toLocaleString();
+    info.appendChild(identity);
+    if(idleRelevant){
+      const idleNote=document.createElement('div');
+      idleNote.className='meta';
+      idleNote.textContent='Activity extends the '+session.idleHours+'h idle timeout without new approval. No use for '+session.idleHours+'h ends this session, even if the overall approval has not expired.';
+      info.appendChild(idleNote);
+    }
+    if(session.note){
+      const note=document.createElement('div');
+      note.className='meta';
+      note.textContent='Purpose: '+session.note;
+      info.appendChild(note);
+    }
+    if(session.state==='approved'){
+      const expires=document.createElement('div');
+      expires.className='meta';
+      expires.textContent='Expires: '+new Date(session.hardUntil).toLocaleString()
+        +(idleRelevant?' · Idle expiry: '+new Date(session.idleUntil).toLocaleString():'')
+        +' · Last use: '+(session.lastUsedAt?new Date(session.lastUsedAt).toLocaleString():'Never');
+      info.appendChild(expires);
+    }
+    row.appendChild(info);
+    const actions=document.createElement('div');
+    actions.className='session-actions';
+    if(session.state==='pending'){
+      const label=document.createElement('label');
+      label.textContent='Grant duration (hours, 1–720; maximum 30 days)';
+      const hours=document.createElement('input');
+      hours.type='number';
+      hours.min='1';hours.max='720';hours.step='1';
+      hours.value='1';
+      label.appendChild(hours);
+      actions.appendChild(label);
+
+      const idleLabel=document.createElement('label');
+      idleLabel.textContent='Inactivity timeout';
+      const idleSelect=document.createElement('select');
+      for(const value of [24,48]){
+        const option=document.createElement('option');
+        option.value=String(value);
+        option.textContent=value+' hours';
+        idleSelect.appendChild(option);
+      }
+      idleSelect.value='24';
+      idleLabel.appendChild(idleSelect);
+      const updateIdleVisibility=()=>{
+        idleLabel.className=Number(hours.value)>24?'':'hidden';
+      };
+      hours.addEventListener('input',updateIdleVisibility);
+      updateIdleVisibility();
+      actions.appendChild(idleLabel);
+
+      const approve=document.createElement('button');
+      approve.textContent='Approve';
+      approve.onclick=()=>{
+        const duration=Number(hours.value);
+        if(!Number.isInteger(duration)||duration<1||duration>720){
+          show('Grant duration must be between 1 and 720 hours',true);return;
+        }
+        const idleHours=duration>24?Number(idleSelect.value):24;
+        if(idleHours!==24&&idleHours!==48){
+          show('Invalid inactivity timeout',true);return;
+        }
+        withOperation('Approving Agent Session…',async()=>{
+          await api('/api/admin/agent-sessions/'+session.id+'/approve',{
+            method:'POST',headers:jsonHeaders,body:JSON.stringify({approvedHours:duration,idleHours})
+          });
+          await loadAgentSessions();
+          show('Agent Session approved for '+duration+' hours.');
+        });
+      };
+      const reject=document.createElement('button');
+      reject.className='secondary';reject.textContent='Reject';
+      reject.onclick=()=>{
+        if(!window.confirm('Reject this Agent Session?'))return;
+        withOperation('Rejecting Agent Session…',async()=>{
+          await api('/api/admin/agent-sessions/'+session.id+'/reject',{method:'POST'});
+          await loadAgentSessions();show('Agent Session rejected.');
+        });
+      };
+      actions.append(approve,reject);
+    }else if(session.state==='approved'){
+      const revoke=document.createElement('button');
+      revoke.className='danger';revoke.textContent='Revoke Session';
+      revoke.onclick=()=>{
+        if(!window.confirm('Revoke this Agent Session immediately?'))return;
+        withOperation('Revoking Agent Session…',async()=>{
+          await api('/api/admin/agent-sessions/'+session.id+'/revoke',{method:'POST'});
+          await loadAgentSessions();show('Agent Session revoked.');
+        });
+      };
+      actions.appendChild(revoke);
+    }
+    row.appendChild(actions);
+    host.appendChild(row);
+  }
+}
+$('refreshAgentSessions').onclick=()=>withOperation('Refreshing Agent Sessions…',loadAgentSessions);
+
 $('refreshZones').onclick=()=>withOperation('Refreshing Zones…',async()=>{
   await loadZones();
   show('Zone list refreshed.');
@@ -572,7 +724,7 @@ $('logout').onclick=()=>withOperation('Signing out…',async()=>{
   location.reload();
 });
 
-withOperation('Loading Zones…',loadZones);
+withOperation('Loading Relay Admin…',async()=>{await loadZones();await loadAgentSessions();});
 `
   );
 }

@@ -1,3 +1,4 @@
+import { handleAgentSessionStorage } from './agent-session-store';
 interface AdminSession {
   expiresAt:string;
   createdAt:string;
@@ -59,6 +60,9 @@ export class RelayAdmin {
     }
 
     const url=new URL(request.url);
+
+    const agentSessionResponse=await handleAgentSessionStorage(this.ctx.storage,request);
+    if(agentSessionResponse)return agentSessionResponse;
 
     if(url.pathname==='/session/create'&&request.method==='POST'){
       const hash=request.headers.get('x-session-hash');
