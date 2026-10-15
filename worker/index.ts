@@ -755,8 +755,8 @@ export default {
       });
     }
 
-    const adminDeviceUnlockMatch=/^\/api\/admin\/zones\/([0-9a-f-]{36})\/devices\/([0-9a-f-]{36})\/unlock$/.exec(url.pathname);
-    if(adminDeviceUnlockMatch&&request.method==='POST'){
+    const adminDeviceControlMatch=/^\/api\/admin\/zones\/([0-9a-f-]{36})\/devices\/([0-9a-f-]{36})\/(unlock|lock)$/.exec(url.pathname);
+    if(adminDeviceControlMatch&&request.method==='POST'){
       if(!sameOriginAllowed(request,url)){
         return json({error:'Origin not allowed'},403);
       }
@@ -765,34 +765,35 @@ export default {
         return json({error:'Authentication required'},401);
       }
 
-      const zoneId=adminDeviceUnlockMatch[1];
-      const deviceId=adminDeviceUnlockMatch[2];
+      const zoneId=adminDeviceControlMatch[1];
+      const deviceId=adminDeviceControlMatch[2];
+      const remoteLock=adminDeviceControlMatch[3]==='lock';
       if(!validUuid(zoneId)||!validUuid(deviceId)){
         return json({error:'Device not found'},404);
       }
 
-      let body:Record<string,unknown>;
-      try{
-        body=JSON.parse(await bodyText(request,8*1024)) as Record<string,unknown>;
-      }catch{
-        return json({error:'Invalid JSON'},400);
+      let minutes:number|undefined;
+      if(!remoteLock){
+        let body:Record<string,unknown>;
+        try{
+          body=JSON.parse(await bodyText(request,8*1024)) as Record<string,unknown>;
+        }catch{
+          return json({error:'Invalid JSON'},400);
+        }
+
+        minutes=Number(body.minutes);
+        if(![5,15,30,60].includes(minutes)){
+          return json({
+            error:'Remote unlock duration must be 5, 15, 30, or 60 minutes'
+          },400);
+        }
       }
 
-      const minutes=Number(body.minutes);
-      if(![5,15,30,60].includes(minutes)){
-        return json({
-          error:'Remote unlock duration must be 5, 15, 30, or 60 minutes'
-        },400);
-      }
-
+      // Both operations require owner authentication AND current Zone membership.
       const zoneResponse=await zone(env,zoneId).fetch(
         new Request(
           'https://zone.internal/info',
-          {
-            headers:{
-              'x-localmcp-relay-admin':'1'
-            }
-          }
+          {headers:{'x-localmcp-relay-admin':'1'}}
         )
       );
       if(!zoneResponse.ok)return zoneResponse;
@@ -806,17 +807,16 @@ export default {
 
       return relay(env,deviceId).fetch(
         new Request(
-          'https://relay.internal/remote-unlock',
+          remoteLock
+            ? 'https://relay.internal/remote-lock'
+            : 'https://relay.internal/remote-unlock',
           {
             method:'POST',
             headers:{
               'Content-Type':'application/json',
               'x-localmcp-internal':'1'
             },
-            body:JSON.stringify({
-              zoneId,
-              minutes
-            })
+            body:JSON.stringify(remoteLock?{zoneId}:{zoneId,minutes})
           }
         )
       );
@@ -1691,7 +1691,7 @@ export class McpRelay {
     }
 
     if(
-      url.pathname==='/remote-unlock'
+      (url.pathname==='/remote-unlock'||url.pathname==='/remote-lock')
       && request.method==='POST'
       && request.headers.get('x-localmcp-internal')==='1'
     ){
@@ -1707,10 +1707,11 @@ export class McpRelay {
         return json({error:'Invalid JSON'},400);
       }
 
+      const remoteLock=url.pathname==='/remote-lock';
       const minutes=Number(body.minutes);
       const zoneId=typeof body.zoneId==='string'?body.zoneId:'';
-      if(!validUuid(zoneId)||![5,15,30,60].includes(minutes)){
-        return json({error:'Invalid remote unlock request'},400);
+      if(!validUuid(zoneId)||(!remoteLock&&![5,15,30,60].includes(minutes))){
+        return json({error:'Invalid remote control request'},400);
       }
 
       const requestId=crypto.randomUUID();
@@ -1718,7 +1719,7 @@ export class McpRelay {
         const timer=setTimeout(()=>{
           this.controlPending.delete(requestId);
           resolveResponse(json({
-            error:'Remote unlock timed out; device may be offline or busy.'
+            error:'Remote control timed out; device may be offline or busy.'
           },504));
         },15000);
 
@@ -1732,15 +1733,15 @@ export class McpRelay {
           socket.send(JSON.stringify({
             type:'control',
             requestId,
-            command:'remote_unlock',
-            minutes,
-            zoneId
+            command:remoteLock?'remote_lock':'remote_unlock',
+            zoneId,
+            ...(remoteLock?{}:{minutes})
           }));
         }catch{
           clearTimeout(timer);
           this.controlPending.delete(requestId);
           resolveResponse(json({
-            error:'Unable to send remote unlock request to Agent.'
+            error:'Unable to send remote control request to Agent.'
           },502));
         }
       });
@@ -2007,6 +2008,7 @@ export class McpRelay {
             expiresAt?:unknown;
             hardExpiresAt?:unknown;
             source?:unknown;
+            locked?:unknown;
           }
         |undefined;
       try{
@@ -2027,6 +2029,7 @@ export class McpRelay {
         if(control.ok===true){
           pending.resolve(json({
             ok:true,
+            locked:control.locked===true,
             expiresAt:
               typeof control.expiresAt==='string'
                 ? control.expiresAt
@@ -2038,14 +2041,14 @@ export class McpRelay {
             source:
               typeof control.source==='string'
                 ? control.source
-                : 'remote'
+                : control.locked===true?null:'remote'
           }));
         }else{
           pending.resolve(json({
             error:
               typeof control.error==='string'
                 ? control.error
-                : 'Remote unlock was rejected by the Agent.'
+                : 'Remote control was rejected by the Agent.'
           },409));
         }
         return;

@@ -53,6 +53,8 @@ test('Relay admin pages emit syntactically valid browser JavaScript',()=>{
   assert.match(dashboard,/const idleRelevant=/);
   assert.match(dashboard,/Expires:/);
   assert.doesNotMatch(dashboard,/confirm\('Approve this AI session/);
+  assert.match(dashboard,/remoteLock.textContent=window\.uiT\('remoteLock'\)/);
+  assert.match(dashboard,/remoteLockScopeHint/);
 });
 
 test('Worker origins require HTTPS except explicit loopback development origins',()=>{
@@ -1311,6 +1313,19 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
 
   const remoteUnlockPath=
     `${origin}/api/admin/zones/${createdZone.zoneId}/devices/${registered.deviceId}/unlock`;
+  const remoteLockPath=
+    `${origin}/api/admin/zones/${createdZone.zoneId}/devices/${registered.deviceId}/lock`;
+
+  // Global Remote Lock is an owner action, not a device or Zone MCP tool.
+  assert.equal((await fetch(remoteLockPath,{method:'POST'})).status,401);
+  assert.equal((await fetch(remoteLockPath,{
+    method:'POST',
+    headers:{Cookie:remoteAdminCookie,Origin:'https://untrusted.example'}
+  })).status,403);
+  assert.equal((await fetch(
+    `${origin}/api/admin/zones/${crypto.randomUUID()}/devices/${registered.deviceId}/lock`,
+    {method:'POST',headers:{Cookie:remoteAdminCookie}}
+  )).status,404);
 
   assert.equal(
     (
@@ -1360,6 +1375,57 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     await readFile(join(root,'zone-remote-unlocked.txt'),'utf8'),
     'remote admin unlock'
   );
+
+  // A scoped Agent Session remains authorized through global Remote Lock.
+  const keepSessionResult:any=await zoneClient.callTool({
+    name:'request_agent_session',arguments:{
+      scope:'devices',devices:[registered.deviceId],tools:['write_file']}
+  });
+  assert.equal(keepSessionResult.isError,undefined);
+  const keepSession=JSON.parse(keepSessionResult.content[0].text);
+  assert.equal((await fetch(
+    origin+'/api/admin/agent-sessions/'+keepSession.sessionId+'/approve',{
+      method:'POST',headers:{Cookie:remoteAdminCookie,'Content-Type':'application/json'},
+      body:JSON.stringify({approvedHours:2})
+    }
+  )).status,200);
+
+  const remoteLock=await fetch(remoteLockPath,{
+    method:'POST',headers:{Cookie:remoteAdminCookie}
+  });
+  assert.equal(remoteLock.status,200);
+  const remoteLockResult:any=await remoteLock.json();
+  assert.equal(remoteLockResult.ok,true);
+  assert.equal(remoteLockResult.locked,true);
+  assert.equal(remoteLockResult.source,null);
+  assert.match(await cli('status'),/Security: LOCKED/);
+  assert.equal((await zoneClient.callTool({
+    name:'write_file',arguments:{device:'Zone Worker',path:'remote-locked.txt',
+      content:'denied without a personal grant'}
+  })).isError,true,'Remote Lock must end global connector authorization');
+  // An attempted out-of-scope operation must not poison this valid token.
+  assert.equal((await zoneClient.callTool({
+    name:'read_file',arguments:{device:'Zone Worker',path:'still-approved.txt',
+      agentSessionToken:keepSession.agentSessionToken}
+  })).isError,true,'An ungranted tool must be denied');
+  assert.equal((await zoneClient.callTool({
+    name:'write_file',arguments:{device:'Zone Worker',path:'still-approved.txt',
+      content:'allowed by independent session',agentSessionToken:keepSession.agentSessionToken}
+  })).isError,undefined,'Scope denial must not invalidate other approved tools');
+  assert.equal(await readFile(join(root,'still-approved.txt'),'utf8'),
+    'allowed by independent session');
+  assert.equal((await fetch(remoteLockPath,{
+    method:'POST',headers:{Cookie:remoteAdminCookie}
+  })).status,200,'Remote Lock must be idempotent while already locked');
+  assert.equal((await fetch(
+    origin+'/api/admin/agent-sessions/'+keepSession.sessionId+'/revoke',{
+      method:'POST',headers:{Cookie:remoteAdminCookie}
+    }
+  )).status,200);
+  assert.equal((await zoneClient.callTool({
+    name:'write_file',arguments:{device:'Zone Worker',path:'locked-revoked.txt',
+      content:'denied',agentSessionToken:keepSession.agentSessionToken}
+  })).isError,true);
 
   assert.match(
     await cli('lock'),

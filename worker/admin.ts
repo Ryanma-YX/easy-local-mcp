@@ -466,7 +466,7 @@ async function openZone(zoneId){
 
     const remoteUnlock=document.createElement('button');
     remoteUnlock.className='secondary';
-    remoteUnlock.textContent='Remote Unlock';
+    remoteUnlock.textContent='Remote Unlock (fixed deadline)';
     remoteUnlock.disabled=!device.online;
     remoteUnlock.onclick=()=>withOperation(
       window.uiT('remoteUnlocking',{name:device.name}),
@@ -488,6 +488,25 @@ async function openZone(zoneId){
               ? window.uiT('remotelyUnlockedExpiry',{time:new Date(result.expiresAt).toLocaleString()})
               : '')
         );
+      }
+    );
+
+    const remoteLock=document.createElement('button');
+    remoteLock.className='secondary';
+    remoteLock.textContent=window.uiT('remoteLock');
+    remoteLock.title=window.uiT('remoteLockScopeHint');
+    remoteLock.disabled=!device.online;
+    remoteLock.onclick=()=>withOperation(
+      window.uiT('remoteLocking',{name:device.name}),
+      async()=>{
+        const result=await api(
+          '/api/admin/zones/'+encodeURIComponent(activeZoneId)
+            +'/devices/'+encodeURIComponent(device.deviceId)
+            +'/lock',
+          {method:'POST'}
+        );
+        if(result.locked!==true)throw new Error('Remote Lock was not confirmed by the Agent.');
+        show(window.uiT('remotelyLocked',{name:device.name}));
       }
     );
 
@@ -527,7 +546,7 @@ async function openZone(zoneId){
       });
     };
 
-    actions.append(unlockMinutes,remoteUnlock,copy,rename,revoke);
+    actions.append(unlockMinutes,remoteUnlock,remoteLock,copy,rename,revoke);
     row.append(info,state,actions);
     host.appendChild(row);
   }

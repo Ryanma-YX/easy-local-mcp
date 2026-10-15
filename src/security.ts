@@ -10,6 +10,9 @@ const execFileAsync=promisify(execFile);
 
 export const securityStateDir=resolve(homedir(),'.localmcp');
 export const unlockFile=resolve(securityStateDir,'unlock.json');
+// Durable revocation generation. A renewal that started before Lock can no
+// longer make its old unlock lease valid, even if its file write finishes last.
+export const unlockFenceFile=resolve(securityStateDir,'unlock.fence');
 export const auditFile=resolve(securityStateDir,'audit.log');
 export const controlSecretFile=resolve(securityStateDir,'control.secret');
 
@@ -124,6 +127,19 @@ interface UnlockLeaseFile {
   hardUntil?:number;
   idleMinutes?:number;
   lastActivityAt?:number;
+  fence?:string|null;
+}
+
+async function readUnlockFence():Promise<string|null>{
+  try{
+    const fence=(await readFile(unlockFenceFile,'utf8')).trim();
+    if(!/^[a-f0-9]{64}$/.test(fence))throw new Error('Invalid unlock revocation fence');
+    return fence;
+  }catch(error:any){
+    if(error?.code==='ENOENT')return null;
+    // Fail closed on unreadable/corrupt fence instead of accepting an old lease.
+    throw error;
+  }
 }
 
 async function readUnlockLease():Promise<UnlockLeaseFile|null>{
@@ -132,6 +148,11 @@ async function readUnlockLease():Promise<UnlockLeaseFile|null>{
     const until=typeof parsed.until==='number'?parsed.until:0;
     const hardUntil=typeof parsed.hardUntil==='number'?parsed.hardUntil:until;
     const source=parsed.source==='remote'?'remote':'local';
+    // Previous releases had no fence; they remain valid only until the first
+    // Lock/Agent start rotates the generation. Never silently accept a stale
+    // lease recreated by an in-flight renewal after Remote Lock has returned.
+    const currentFence=await readUnlockFence();
+    if((parsed.fence??null)!==currentFence)return null;
 
     if(until>Date.now()&&hardUntil>Date.now()){
       return {
@@ -146,7 +167,8 @@ async function readUnlockLease():Promise<UnlockLeaseFile|null>{
         lastActivityAt:
           typeof parsed.lastActivityAt==='number'
             ? parsed.lastActivityAt
-            : undefined
+            : undefined,
+        fence:currentFence
       };
     }
 
@@ -228,14 +250,24 @@ export async function unlockLocal(
       source==='remote'?60:480,
       Number.isInteger(options.maxSessionMinutes)
         ? options.maxSessionMinutes!
-        : source==='remote'?60:240
+        : source==='remote'?minutes:240
     )
   );
   const now=Date.now();
   const until=now+minutes*60_000;
-  const hardUntil=now+maxSessionMinutes*60_000;
+  // Remote Unlock is fixed, unlike local CLI unlock.
+  const hardUntil=now+(source==='remote'?minutes:maxSessionMinutes)*60_000;
+  // Explicit Remote Unlock supersedes every older sliding lease. Rotate
+  // the generation first so a delayed local/legacy renewal cannot overwrite
+  // this owner's fixed-duration selection with a longer valid lease.
+  const fence=source==='remote'
+    ?randomBytes(32).toString('hex')
+    :await readUnlockFence();
+  if(source==='remote'){
+    await secureWriteFileAtomic(unlockFenceFile,fence!);
+  }
 
-  await secureWriteFile(
+  await secureWriteFileAtomic(
     unlockFile,
     JSON.stringify({
       version:2,
@@ -243,7 +275,8 @@ export async function unlockLocal(
       until,
       hardUntil,
       idleMinutes:minutes,
-      lastActivityAt:now
+      lastActivityAt:now,
+      fence
     })
   );
 
@@ -274,7 +307,7 @@ export async function renewUnlockLease(
   }
 
   const lease=await readUnlockLease();
-  if(!lease||!config.renewUnlockOnPrivilegedUse){
+  if(!lease||lease.source==='remote'||!config.renewUnlockOnPrivilegedUse){
     return getUnlockStatus(false);
   }
 
@@ -293,7 +326,7 @@ export async function renewUnlockLease(
     return getUnlockStatus(false);
   }
 
-  await secureWriteFile(
+  await secureWriteFileAtomic(
     unlockFile,
     JSON.stringify({
       version:2,
@@ -301,7 +334,8 @@ export async function renewUnlockLease(
       until:nextUntil,
       hardUntil,
       idleMinutes,
-      lastActivityAt:now
+      lastActivityAt:now,
+      fence:lease.fence??null
     })
   );
 
@@ -315,6 +349,10 @@ export async function renewUnlockLease(
 }
 
 export async function lockLocal(reason='manual'):Promise<UnlockStatus>{
+  // Publish the revocation fence FIRST. A renewal already holding an older
+  // lease may still finish its atomic write after this delete, but that lease
+  // now has the wrong generation and cannot authorize subsequent requests.
+  await secureWriteFileAtomic(unlockFenceFile,randomBytes(32).toString('hex'));
   await rm(unlockFile,{force:true});
   await auditSecurity('lock',{reason});
 
@@ -328,6 +366,9 @@ export async function lockLocal(reason='manual'):Promise<UnlockStatus>{
 }
 
 export async function resetUnlockOnAgentStart(){
+  // Agent start is another revocation barrier: an orphaned HTTP child's
+  // renewal must not resurrect its previously authorized lease.
+  await secureWriteFileAtomic(unlockFenceFile,randomBytes(32).toString('hex'));
   await rm(unlockFile,{force:true});
 }
 
