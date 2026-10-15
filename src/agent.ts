@@ -662,22 +662,42 @@ if(!localReady||closing){
             return;
           }
 
-          if(command!=='remote_unlock'){
+          if(command!=='remote_unlock'&&command!=='remote_lock'){
             sendControlResult(false,{error:'Unsupported control command'});
             return;
           }
 
           if(!settings?.zoneId){
             sendControlResult(false,{
-              error:'Remote unlock is available only for Zone members'
+              error:'Remote control is available only for Zone members'
             });
             return;
           }
 
           if(requestedZoneId!==settings.zoneId){
             sendControlResult(false,{
-              error:'Remote unlock Zone does not match this device membership'
+              error:'Remote control Zone does not match this device membership'
             });
+            return;
+          }
+
+          if(command==='remote_lock'){
+            // Remote Lock ends only the global unlock. Approved sessions retain
+            // their individual scoped authorization and are not revoked here.
+            const disabled=await disableAlwaysUnlocked('zone_remote_lock');
+            await lockLocal('zone_remote_lock');
+            if(disabled){
+              // The HTTP child caches config, so reload after clearing an
+              // Always Unlocked preference to enforce the updated policy.
+              reloading??=reloadLocal().finally(()=>{reloading=undefined;});
+              await reloading;
+            }
+            await auditSecurity('remote_lock_applied',{
+              actor:'relay_admin',
+              zoneId:settings.zoneId,
+              deviceId:settings.deviceId
+            });
+            sendControlResult(true,{locked:true,source:null});
             return;
           }
 
@@ -693,7 +713,7 @@ if(!localReady||closing){
             minutes,
             {
               source:'remote',
-              maxSessionMinutes:60
+              maxSessionMinutes:minutes
             }
           );
           await auditSecurity('remote_unlock_applied',{

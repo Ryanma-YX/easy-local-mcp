@@ -15,7 +15,7 @@ const config={alwaysUnlocked:false,renewUnlockOnPrivilegedUse:true,
 await unlockLocal(5,{source:'remote'});
 assert.equal((await getUnlockStatus()).locked,false,'precondition: globally unlocked');
 const oldLease=await readFile(unlockFile,'utf8');
-assert.equal(JSON.parse(oldLease).fence,null,'legacy no-fence lease supported');
+assert.match(JSON.parse(oldLease).fence,/^[a-f0-9]{64}$/,'Remote Unlock must rotate its generation');
 await lockLocal('remote_lock_test');
 const generation=(await readFile(unlockFenceFile,'utf8')).trim();
 assert.match(generation,/^[a-f0-9]{64}$/);
@@ -25,9 +25,9 @@ assert.equal((await getUnlockStatus()).locked,true,'late writer must not resurre
 const explicit=await unlockLocal(5,{source:'remote'});
 assert.equal(explicit.locked,false,'new explicit Remote Unlock can issue a current lease');
 const renewed=await renewUnlockLease(config);
-assert.equal(renewed.locked,false,'renewal within same generation still succeeds');
+assert.equal(renewed.locked,false,'fixed Remote Unlock remains active before expiry');
 const lease=JSON.parse(await readFile(unlockFile,'utf8'));
-assert.equal(lease.fence,generation,'renewal preserves the current revocation generation');
+assert.notEqual(lease.fence,generation,'Remote Unlock rotates the older Lock generation');
 await lockLocal('remote_lock_after_renewal');
 await writeFile(unlockFile,JSON.stringify(lease));
 assert.equal((await getUnlockStatus()).locked,true,'stale renewed lease denied after second lock');

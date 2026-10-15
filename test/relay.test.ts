@@ -44,6 +44,8 @@ test('Relay admin pages emit syntactically valid browser JavaScript',()=>{
   assert.match(dashboard,/Copy URL/);
   assert.match(dashboard,/Copy Code/);
   assert.match(dashboard,/Copy ID/);
+  assert.match(dashboard,/remoteLock.textContent=window\.uiT\('remoteLock'\)/);
+  assert.match(dashboard,/remoteLockScopeHint/);
 });
 
 test('Worker origins require HTTPS except explicit loopback development origins',()=>{
@@ -1192,6 +1194,19 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
 
   const remoteUnlockPath=
     `${origin}/api/admin/zones/${createdZone.zoneId}/devices/${registered.deviceId}/unlock`;
+  const remoteLockPath=
+    `${origin}/api/admin/zones/${createdZone.zoneId}/devices/${registered.deviceId}/lock`;
+
+  // Global Remote Lock is an owner action, not a device or Zone MCP tool.
+  assert.equal((await fetch(remoteLockPath,{method:'POST'})).status,401);
+  assert.equal((await fetch(remoteLockPath,{
+    method:'POST',
+    headers:{Cookie:remoteAdminCookie,Origin:'https://untrusted.example'}
+  })).status,403);
+  assert.equal((await fetch(
+    `${origin}/api/admin/zones/${crypto.randomUUID()}/devices/${registered.deviceId}/lock`,
+    {method:'POST',headers:{Cookie:remoteAdminCookie}}
+  )).status,404);
 
   assert.equal(
     (
@@ -1241,6 +1256,23 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
     await readFile(join(root,'zone-remote-unlocked.txt'),'utf8'),
     'remote admin unlock'
   );
+
+  const remoteLock=await fetch(remoteLockPath,{
+    method:'POST',headers:{Cookie:remoteAdminCookie}
+  });
+  assert.equal(remoteLock.status,200);
+  const remoteLockResult:any=await remoteLock.json();
+  assert.equal(remoteLockResult.ok,true);
+  assert.equal(remoteLockResult.locked,true);
+  assert.equal(remoteLockResult.source,null);
+  assert.match(await cli('status'),/Security: LOCKED/);
+  assert.equal((await zoneClient.callTool({
+    name:'write_file',arguments:{device:'Zone Worker',path:'remote-locked.txt',
+      content:'denied without a personal grant'}
+  })).isError,true,'Remote Lock must end global connector authorization');
+  assert.equal((await fetch(remoteLockPath,{
+    method:'POST',headers:{Cookie:remoteAdminCookie}
+  })).status,200,'Remote Lock must be idempotent while already locked');
 
   assert.match(
     await cli('lock'),
