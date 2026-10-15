@@ -59,6 +59,7 @@ Easy Local MCP 基于 [daodao97/localmcp](https://github.com/daodao97/localmcp) 
 需要：
 
 - Node.js 22+
+- Linux 外部 MCP 进程运行需要 `setsid`（由 util-linux 或兼容软件包提供）
 - 构建桌面版需要 Rust stable
 - 构建 Windows 安装包需要 Visual Studio 2022 / MSVC 与 Windows SDK
 
@@ -68,6 +69,8 @@ cd easy-local-mcp
 npm ci
 npm run desktop:bundle
 ```
+
+Linux 用户级 systemd 守护服务（无需 root 运行 Agent）：请参考 [Linux systemd 指南](docs/LINUX-SYSTEMD.md)。安装脚本不会自动启动服务。安装后，CLI/控制中心的启动、停止及重启由 systemd 服务管理。外部 MCP 工具使用显式配置的服务 `PATH`。
 
 ## 快速开始
 

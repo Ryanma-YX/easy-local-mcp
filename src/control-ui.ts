@@ -10,6 +10,7 @@ import {
   updateSecurityPolicy
 } from './security-policy.js';
 import { control, maskMcpUrl, request, status } from './lifecycle.js';
+import {managedUserServiceState} from './systemd-service.js';
 import { DEFAULT_PUBLIC_WORKER_URL, validatedWorkerOrigin } from './relay.js';
 import { uiI18nClient } from './ui-i18n.js';
 import {
@@ -227,6 +228,7 @@ function capabilityAvailability(enabled:boolean,privileged:boolean,current:Await
 
 async function statusView(){
   const current=await status();
+  const service=await managedUserServiceState();
   const relay=await relaySetupState();
   const registered=await registeredDeviceRecord();
   const configuration=await configView();
@@ -250,6 +252,15 @@ async function statusView(){
   return {
     agent:{
       status:current.status,
+      supervision:service
+        ? {mode:'systemd-user',unit:service.unit,
+          state:service.state,
+          active:service.active,
+          verifiedOwner:current.status==='running'
+            &&service.active&&service.mainPid===current.pid,
+          ownershipConflict:current.status==='running'
+            &&(!service.active||service.mainPid!==current.pid)}
+        : {mode:'direct'},
       pid:current.pid,
       ready:current.ready,
       locked:current.locked,
@@ -445,13 +456,9 @@ async function updateWorkspaces(body:JsonObject){
 }
 
 async function runAgentAction(action:'start'|'stop'|'restart'){
-  if(action==='restart'){
-    const current=await status();
-    if(current.status==='running')await control('stop');
-    await control('start');
-  }else{
-    await control(action);
-  }
+  // The same lifecycle coordinator enforces managed-service ownership for
+  // both the CLI and Control Center. Restart is one serialized operation.
+  await control(action);
   return statusView();
 }
 
@@ -778,6 +785,7 @@ input[type="text"],input[type="password"],select{width:100%;border:1px solid #cf
 <h2>Agent lifecycle</h2>
 <div class="row"><span class="label">Status</span><span id="agentStatus" class="value">-</span></div>
 <div class="row"><span class="label">PID</span><span id="pid" class="value">-</span></div>
+<div class="row"><span class="label">Supervisor</span><span id="agentSupervisor" class="value">-</span></div>
 <div class="row"><span class="label">Unlock mode</span><span id="unlockMode" class="value">-</span></div>
 <div class="row"><span class="label">Idle expiry</span><span id="expiry" class="value">-</span></div>
 <div class="row"><span class="label">Hard limit</span><span id="hardExpiry" class="value">-</span></div>
@@ -1089,6 +1097,12 @@ ${uiI18nClient('control')}
           ? window.uiT('Stopped')
           : data.agent.status;
     $('pid').textContent=data.agent.pid??'-';
+    const supervisor=data.agent.supervision;
+    $('agentSupervisor').textContent=supervisor?.mode==='systemd-user'
+      ? supervisor.verifiedOwner?'systemd user / supervised'
+        : supervisor.ownershipConflict?'systemd user / ownership conflict'
+          :'systemd user / '+supervisor.state
+      :'Direct execution / no service supervisor';
     $('unlockMode').textContent=alwaysUnlocked
       ? 'ALWAYS UNLOCKED'
       : data.agent.locked

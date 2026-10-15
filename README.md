@@ -54,11 +54,16 @@ Download the latest Windows x64 installer from [GitHub Releases](https://github.
 
 The desktop installer includes the required runtime. The target PC does not need Node.js or Rust.
 
+### Linux systemd user service
+
+For a rootless Linux Agent with OS-managed crash recovery and process-tree cleanup, see [Linux systemd supervision](docs/LINUX-SYSTEMD.md). The installer is opt-in and does not start a service automatically. Once installed, CLI/Control Center lifecycle actions use the managed unit; external MCP executables use a documented explicit service `PATH`.
+
 ### Build from source
 
 Requirements:
 
 - Node.js 22+
+- Linux external MCP execution: `setsid` (provided by util-linux or an equivalent package)
 - Rust stable for the desktop app
 - Visual Studio 2022 / MSVC and Windows SDK for the Windows installer
 

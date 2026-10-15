@@ -6,6 +6,8 @@ import { createServer as createNetServer } from 'node:net';
 import { hostname } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
+import {startSystemdSupervision} from './systemd-supervision.js';
+import {assertAgentStartupAllowed} from './systemd-service.js';
 import { stateDir, logFile, maskMcpUrl, serveControl } from './lifecycle.js';
 import { config } from './config.js';
 import WebSocket from 'ws';
@@ -45,12 +47,11 @@ interface Settings {
   zoneId?:string;
 }
 
+// Once the installer-owned user unit is present, direct Agent launches must
+// not silently bypass OS supervision. The unit is the only supported entry.
+await assertAgentStartupAllowed();
+
 await mkdir(stateDir,{recursive:true,mode:0o700});
-if(await zoneJoinCode()){
-  await disableAlwaysUnlocked('zone_join_staged');
-}
-await resetUnlockOnAgentStart();
-await auditSecurity('agent_start',{pid:process.pid});
 
 const pidFile=resolve(stateDir,'agent.pid');
 const workerFile=resolve(stateDir,'worker.json');
@@ -65,6 +66,7 @@ let reconnect:ReturnType<typeof setTimeout>|undefined;
 let reloading:Promise<void>|undefined;
 let settings:Settings|undefined;
 let origin:URL|undefined;
+let stopSystemdSupervision=()=>{};
 
 type AgentLogLevel='INFO'|'WARN'|'ERROR';
 
@@ -342,6 +344,20 @@ const closeControl=await serveControl(
     },
     rotate:rotateCredentials,
     reregister:reregisterDevice
+  },
+  async()=>{
+    // V14: final managed-mode check while Agent owns its startup socket lock.
+    // Installer holds the very same lock through preflight and unit write.
+    // No operational control request is accepted until this callback finishes.
+    await assertAgentStartupAllowed();
+    // A duplicate must never alter the running agent's shared unlock state.
+    // This runs only after successful bind, while startup ownership is held
+    // and the control endpoint is not yet accepting operational requests.
+    if(await zoneJoinCode()){
+      await disableAlwaysUnlocked('zone_join_staged');
+    }
+    await resetUnlockOnAgentStart();
+    await auditSecurity('agent_start',{pid:process.pid});
   }
 );
 
@@ -404,19 +420,28 @@ async function findFreePort(){
 const port=await findFreePort();
 
 function spawnLocal(){
+  const childEnv:NodeJS.ProcessEnv={
+    ...process.env,
+    LOCALMCP_PORT:String(port),
+    LOCALMCP_TOKEN:localToken,
+    LOCALMCP_RELAY_GATE_KEY:relayGateKey,
+    LOCALMCP_INTERNAL:'1',
+    LOCALMCP_ZONE_ID:settings?.zoneId??''
+  };
+  // systemd health reporting belongs to the Agent only. Never delegate the
+  // service watchdog socket to an MCP-executing child.
+  for(const key of ['NOTIFY_SOCKET','WATCHDOG_USEC','WATCHDOG_PID',
+    'LOCALMCP_SYSTEMD_MANAGED']){
+    delete childEnv[key];
+  }
   return spawn(
     process.execPath,
     [fileURLToPath(new URL('./index.js',import.meta.url)),'http'],
     {
-      env:{
-        ...process.env,
-        LOCALMCP_PORT:String(port),
-        LOCALMCP_TOKEN:localToken,
-        LOCALMCP_RELAY_GATE_KEY:relayGateKey,
-        LOCALMCP_INTERNAL:'1',
-        LOCALMCP_ZONE_ID:settings?.zoneId??''
-      },
-      stdio:['ignore','ignore','inherit'],
+      env:childEnv,
+      // A live IPC channel ties this HTTP server to the Agent's lifetime.
+      // On SIGKILL the channel closes even though normal shutdown cannot run.
+      stdio:['ignore','ignore','inherit','ipc'],
       windowsHide:process.platform==='win32'
     }
   );
@@ -443,6 +468,7 @@ function stop(code=0){
 
   closing=true;
   ready=false;
+  stopSystemdSupervision();
 
   clearTimeout(reconnect);
   socket?.terminate();
@@ -545,6 +571,14 @@ for(let i=0;i<100&&!closing;i++){
 if(!localReady||closing){
   stop(1);
 }else{
+  stopSystemdSupervision=await startSystemdSupervision({
+    port,
+    onUnhealthy:reason=>{
+      logEvent('ERROR','local_health_failed',{reason});
+      stop(1);
+    },
+    log:message=>logEvent('WARN','local_health_probe',{message})
+  });
   let attempt=0;
 
   await writeConnectionFile();

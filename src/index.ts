@@ -125,6 +125,28 @@ async function autoStartDesktopAgent(){
 
 async function main(){
   const mode=process.argv[2]||'start';
+  // Register the parent-death listener before initialization awaits.
+  // It gains the full cleanup contract once execution managers are ready.
+  let shutdownOwned=async()=>{};
+
+  if(mode==='http'&&process.env.LOCALMCP_INTERNAL==='1'){
+    // An Agent-owned HTTP child must never survive loss of its parent.
+    // Register before startup awaits; handle an already-disconnected IPC too.
+    if(!process.channel){
+      throw new Error('Internal HTTP server requires an Agent IPC channel');
+    }
+    process.once('disconnect',()=>{
+      // Even blocked MCP work must not prevent the old HTTP port being freed.
+      const deadline=setTimeout(()=>process.exit(1),4000);
+      void shutdownOwned()
+        .catch(error=>console.error('Owned process cleanup failed:',error))
+        .finally(()=>{
+          clearTimeout(deadline);
+          process.exit(0);
+        });
+    });
+    if(!process.connected)process.exit(0);
+  }
 
   if(mode==='init'){
     await ensureInitialized(true);
@@ -245,7 +267,17 @@ async function main(){
     }=await import('./lifecycle.js');
 
     if(mode==='status'){
-      printStatus(await status());
+      const current=await status();
+      printStatus(current);
+      const {managedUserServiceState}=await import('./systemd-service.js');
+      const service=await managedUserServiceState();
+      console.log(service
+        ? 'Supervision: systemd user service ('+service.state
+          +', '+(current.status==='running'
+            ? service.active&&service.mainPid===current.pid
+              ? 'verified owner':'OWNERSHIP CONFLICT'
+            : 'no running Agent')+')'
+        : 'Supervision: direct / unmanaged');
       return;
     }
 
@@ -317,6 +349,24 @@ async function main(){
   const skills=await loadSkills(cfg.skillsDir,cfg.enabledSkills);
   const processes=new ProcessManager();
   const commands=new CommandRunner();
+  const loaders=new Set<McpLoader>([mcp]);
+  let shuttingDown=false;
+  let ownedCleanup:Promise<void>|undefined;
+
+  // One shutdown contract for every process created on behalf of this HTTP
+  // instance. Initiate cancellation synchronously before awaiting any I/O.
+  function cleanupOwned(){
+    if(ownedCleanup)return ownedCleanup;
+    shuttingDown=true;
+    const tasks=[
+      commands.close(),
+      processes.close(),
+      ...[...loaders].map(loader=>loader.close({force:true}))
+    ];
+    ownedCleanup=Promise.allSettled(tasks).then(()=>{});
+    return ownedCleanup;
+  }
+  shutdownOwned=cleanupOwned;
 
   let runtime={
     config:cfg,
@@ -329,6 +379,7 @@ async function main(){
   const closeWatcher=watchConfig(
     configFilePath(),
     async content=>{
+      if(shuttingDown)return;
       const nextConfig=await config({
         content,
         path:configFilePath()
@@ -342,6 +393,7 @@ async function main(){
         nextConfig.skillsDir,
         nextConfig.enabledSkills
       );
+      if(shuttingDown)return;
 
       const changedMcp=
         JSON.stringify(nextConfig.mcpServers)
@@ -350,6 +402,7 @@ async function main(){
       const nextMcp=changedMcp
         ? new McpLoader(nextConfig.mcpServers)
         : runtime.mcp;
+      loaders.add(nextMcp);
 
       const previous=runtime;
 
@@ -362,7 +415,10 @@ async function main(){
       if(changedMcp){
         const closing=previous.mcp
           .close()
-          .finally(()=>retired.delete(closing));
+          .finally(()=>{
+            retired.delete(closing);
+            loaders.delete(previous.mcp);
+          });
 
         retired.add(closing);
       }
@@ -393,6 +449,10 @@ async function main(){
     const app=express();
 
     app.disable('x-powered-by');
+    app.use((_req,res,next)=>{
+      if(shuttingDown){res.sendStatus(503);return;}
+      next();
+    });
 
     app.get('/healthz',(_req,res)=>{
       res.json({ok:true});
@@ -547,23 +607,30 @@ async function main(){
     );
   }
 
+  let stopping=false;
   const stop=async()=>{
-    await closeWatcher();
-
-    for(const fn of shutdown){
-      await fn();
+    if(stopping)return;
+    stopping=true;
+    // Do not wait for an in-flight MCP request before cancelling its process.
+    const deadline=setTimeout(()=>process.exit(1),4000);
+    const owned=cleanupOwned();
+    try{
+      await Promise.allSettled([
+        owned,
+        closeWatcher(),
+        ...shutdown.map(fn=>fn())
+      ]);
+      await Promise.allSettled([...retired]);
+      clearTimeout(deadline);
+      process.exit(0);
+    }catch(error){
+      console.error('HTTP shutdown failed:',error);
+      process.exit(1);
     }
-
-    await commands.close();
-    await processes.close();
-    await runtime.mcp.close();
-    await Promise.allSettled([...retired]);
-
-    process.exit(0);
   };
 
-  process.once('SIGINT',stop);
-  process.once('SIGTERM',stop);
+  process.once('SIGINT',()=>{void stop();});
+  process.once('SIGTERM',()=>{void stop();});
 }
 
 main().catch(error=>{
