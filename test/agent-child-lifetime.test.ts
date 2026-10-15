@@ -229,9 +229,14 @@ test('Agent SIGKILL stops MCP-managed processes before fixed-port restart',{
   const token=childEnv.find(e=>e.startsWith('LOCALMCP_TOKEN='))?.slice(15);
   assert.match(token??'',/^[a-f0-9]{64}$/,'Missing test-owned HTTP bearer token');
   const now=Date.now();
+  // Agent startup rotates the revocation fence. This synthetic test lease
+  // must bind to that current generation instead of resurrecting a stale
+  // pre-start lease, which the product now intentionally refuses.
+  const fence=(await readFile(join(stateDir,'unlock.fence'),'utf8')).trim();
+  assert.match(fence,/^[a-f0-9]{64}$/);
   await writeFile(join(stateDir,'unlock.json'),JSON.stringify({
     version:2,source:'local',until:now+600000,hardUntil:now+1200000,
-    idleMinutes:10,lastActivityAt:now
+    idleMinutes:10,lastActivityAt:now,fence
   }),{mode:0o600});
 
   const client=new Client({name:'crash-cleanup-test',version:'1'});
