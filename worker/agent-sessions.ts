@@ -145,21 +145,27 @@ export async function handleAgentSessionTool(
   });
 }
 
-export async function approvedAgentSession(
+export async function authorizedAgentSessionId(
   env:SessionEnv,
   connector:SessionConnector,
   token:unknown,
   targetDeviceId:string,
   tool:string
-):Promise<boolean>{
+):Promise<string|null>{
   const decoded=decodeSessionToken(token);
-  if(!decoded)return false;
+  if(!decoded)return null;
   const identity=await connectorIdentity(connector);
   const response=await post(env,'authorize',{
     ...identity,id:decoded.id,tokenHash:await hashSecret(decoded.secret),
     deviceId:targetDeviceId,tool
   });
-  if(!response.ok)return false;
-  const data=await response.json() as {authorized?:boolean};
-  return data.authorized===true;
+  if(!response.ok)return null;
+  const data=await response.json() as {authorized?:boolean;id?:string};
+  return data.authorized===true&&data.id===decoded.id?decoded.id:null;
+}
+
+export async function approvedAgentSession(
+  env:SessionEnv,connector:SessionConnector,token:unknown,targetDeviceId:string,tool:string
+):Promise<boolean>{
+  return (await authorizedAgentSessionId(env,connector,token,targetDeviceId,tool))!==null;
 }

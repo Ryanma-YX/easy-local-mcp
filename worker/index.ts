@@ -9,7 +9,7 @@ import {
   registerZone
 } from './admin-session';
 import { handleZoneMcp } from './zone-mcp';
-import { agentSessionTools, withSessionArgument, handleAgentSessionTool, approvedAgentSession, SESSION_TOKEN_ARGUMENT } from './agent-sessions';
+import { agentSessionTools, withSessionArgument, handleAgentSessionTool, authorizedAgentSessionId, SESSION_TOKEN_ARGUMENT } from './agent-sessions';
 import { homePage } from './home';
 export { RelayAdmin } from './relay-admin';
 export { ZoneManager } from './zone';
@@ -349,9 +349,9 @@ async function routeDeviceMcp(
     );
     if(control)return control;
   }
-  const approved=rpc.method==='tools/call'
-    ?await approvedAgentSession(env,connector,args[SESSION_TOKEN_ARGUMENT],deviceId,name)
-    :false;
+  const sessionId=rpc.method==='tools/call'
+    ?await authorizedAgentSessionId(env,connector,args[SESSION_TOKEN_ARGUMENT],deviceId,name)
+    :null;
   if(rpc.method==='tools/call'){
     const cleanArgs={...args};
     delete cleanArgs[SESSION_TOKEN_ARGUMENT];
@@ -361,7 +361,8 @@ async function routeDeviceMcp(
     'Content-Type':'application/json',
     'Accept':'application/json, text/event-stream',
     'x-localmcp-mcp-token':credential,
-    'x-localmcp-session-approved':approved?'1':'0'
+    'x-localmcp-session-approved':sessionId?'1':'0',
+    ...(sessionId?{'x-localmcp-session-id':sessionId}:{})
   });
   if(version)headers.set('MCP-Protocol-Version',version);
   const response=await relay(env,deviceId).fetch(new Request(
@@ -502,13 +503,56 @@ export default {
         }
         body=parsed as Record<string,unknown>;
       }catch{return json({error:'Invalid request'},400);}
-      return env.ADMIN.get(env.ADMIN.idFromName('relay-admin')).fetch(
+      const result=await env.ADMIN.get(env.ADMIN.idFromName('relay-admin')).fetch(
         new Request(`https://admin.internal/agent-sessions/${sessionAdminMatch[2]}`,{
           method:'POST',
           headers:{'x-localmcp-internal':'1','Content-Type':'application/json'},
           body:JSON.stringify({id:sessionAdminMatch[1],approvedHours:body.approvedHours,idleHours:body.idleHours,approvedTools:body.approvedTools})
         })
       );
+      if(!result.ok||sessionAdminMatch[2]!=='revoke')return result;
+      // Revocation is committed first: no subsequent authorization succeeds.
+      // Cancellation is best-effort for currently executing requests only.
+      const payload=await result.json() as {session?:{
+        id:string;connectorKind:string;connectorId:string;
+        scope:string;devices:string[];state:string;
+      }};
+      const session=payload.session;
+      if(!session||session.state!=='revoked')return json(payload);
+      let deviceIds:string[]=[];
+      if(session.scope==='device'){
+        deviceIds=[session.connectorId];
+      }else if(session.scope==='devices'){
+        deviceIds=session.devices;
+      }else if(session.scope==='zone/all'){
+        try{
+          const info=await zone(env,session.connectorId).fetch(new Request(
+            'https://zone.internal/info',
+            {headers:{'x-localmcp-relay-admin':'1'}}
+          ));
+          if(info.ok){
+            const data=await info.json() as {devices?:Array<{deviceId:string}>};
+            deviceIds=(data.devices||[]).map(d=>d.deviceId);
+          }
+        }catch{}
+      }
+      const attempts=await Promise.allSettled([...new Set(deviceIds)].map(deviceId=>
+        relay(env,deviceId).fetch(new Request('https://relay.internal/cancel-session',{
+          method:'POST',headers:{'x-localmcp-internal':'1','Content-Type':'application/json'},
+          body:JSON.stringify({sessionId:session.id})
+        }))
+      ));
+      let requested=0;
+      for(const attempt of attempts){
+        if(attempt.status!=='fulfilled'||!attempt.value.ok)continue;
+        try{
+          const data=await attempt.value.json() as {cancellations?:number};
+          requested+=data.cancellations||0;
+        }catch{}
+      }
+      return json({...payload,cancellation:{bestEffort:true,requestsSignalled:requested,
+        devicesReached:attempts.filter(a=>a.status==='fulfilled'&&a.value.ok).length}});
+
     }
 
     if(url.pathname==='/api/admin/zones'){
@@ -1554,6 +1598,7 @@ interface Pending {
   resolve:(response:Response)=>void;
   timer:ReturnType<typeof setTimeout>;
   lane:PendingLane;
+  sessionId:string|null;
 }
 
 interface ControlPending {
@@ -1589,6 +1634,36 @@ export class McpRelay {
       return json({
         online:this.ctx.getWebSockets('agent').length>0
       });
+    }
+
+    if(url.pathname==='/cancel-session'&&request.method==='POST'
+      &&request.headers.get('x-localmcp-internal')==='1'){
+      const body=await request.json().catch(()=>null) as {sessionId?:unknown}|null;
+      const sessionId=body?.sessionId;
+      if(typeof sessionId!=='string'||!validUuid(sessionId)){
+        return json({error:'Invalid session ID'},400);
+      }
+      // Also fence a request authorized just before Revoke but forwarded
+      // after its cancellation notice. Durable across relay hibernation.
+      const now=Date.now();
+      await this.ctx.storage.put(`revoked-session:${sessionId}`,now+180_000);
+      // Best-effort cleanup of old cancellation markers; a later session
+      // can never reuse this UUID. Batch under the Durable Object 128-key cap.
+      const markers=await this.ctx.storage.list<number>({prefix:'revoked-session:'});
+      const stale=[...markers].filter(([,until])=>until<=now).map(([key])=>key);
+      for(let offset=0;offset<stale.length;offset+=128){
+        await this.ctx.storage.delete(stale.slice(offset,offset+128));
+      }
+      let cancellations=0;
+      for(const [id,pending] of this.pending){
+        if(pending.sessionId!==sessionId)continue;
+        // Cancel only requests authorized as this exact session; ordinary
+        // local operations and other sessions are never part of this set.
+        try{pending.socket.send(JSON.stringify({type:'cancel',requestId:id}));}catch{}
+        this.finish(id,json({error:'Agent Session revoked; in-flight work cancellation requested.'},409));
+        cancellations++;
+      }
+      return json({ok:true,cancellations});
     }
 
     if(
@@ -1832,6 +1907,21 @@ export class McpRelay {
       );
     }
 
+    // Only trusted connector routing can attach an approved session identity.
+    // Never forward caller-supplied session IDs from public MCP requests.
+    const sessionId=(internal||!legacy)
+      &&request.headers.get('x-localmcp-session-approved')==='1'
+      &&validUuid(request.headers.get('x-localmcp-session-id')||'')
+        ?request.headers.get('x-localmcp-session-id')!:null;
+    if(sessionId){
+      const revokedUntil=await this.ctx.storage.get<number>(`revoked-session:${sessionId}`);
+      if(revokedUntil&&revokedUntil>Date.now()){
+        return json({error:'Agent Session revoked before execution began'},403);
+      }
+      if(revokedUntil){
+        await this.ctx.storage.delete(`revoked-session:${sessionId}`);
+      }
+    }
     const id=crypto.randomUUID();
 
     return new Promise<Response>(resolveResponse=>{
@@ -1855,7 +1945,8 @@ export class McpRelay {
           assembly:new Assembly(),
           resolve:resolveResponse,
           timer,
-          lane
+          lane,
+          sessionId
         }
       );
 
@@ -1867,7 +1958,8 @@ export class McpRelay {
               body,
               protocolVersion:request.headers.get('MCP-Protocol-Version'),
               sessionApproved:request.headers.get('x-localmcp-session-approved')==='1'
-                && (internal||!legacy)
+                && (internal||!legacy),
+              sessionId
             }
           )
         ){

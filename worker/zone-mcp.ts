@@ -1,4 +1,4 @@
-import { agentSessionTools, withSessionArgument, handleAgentSessionTool, approvedAgentSession, SESSION_TOKEN_ARGUMENT } from './agent-sessions';
+import { agentSessionTools, withSessionArgument, handleAgentSessionTool, authorizedAgentSessionId, SESSION_TOKEN_ARGUMENT } from './agent-sessions';
 interface ZoneMcpEnv {
   ADMIN:DurableObjectNamespace;
   RELAY:DurableObjectNamespace;
@@ -126,13 +126,14 @@ async function forward(
   deviceId:string,
   body:string,
   protocolVersion:string|null,
-  sessionApproved=false
+  sessionId:string|null=null
 ){
   const headers=new Headers({
     'Content-Type':'application/json',
     'Accept':'application/json, text/event-stream',
     'x-localmcp-internal':'1',
-    'x-localmcp-session-approved':sessionApproved?'1':'0'
+    'x-localmcp-session-approved':sessionId?'1':'0',
+    ...(sessionId?{'x-localmcp-session-id':sessionId}:{})
   });
 
   if(protocolVersion){
@@ -482,7 +483,7 @@ export async function handleZoneMcp(
       );
     }
 
-    const approved=await approvedAgentSession(
+    const sessionId=await authorizedAgentSessionId(
       env,connector,args[SESSION_TOKEN_ARGUMENT],selected.device.deviceId,name
     );
     const forwardedArgs={...args};
@@ -504,7 +505,7 @@ export async function handleZoneMcp(
       selected.device.deviceId,
       forwardedBody,
       protocolVersion,
-      approved
+      sessionId
     );
 
     const responseText=await response.text();

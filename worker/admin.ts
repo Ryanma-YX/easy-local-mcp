@@ -619,19 +619,23 @@ function toolGrantEditor(initial){
   const summary=document.createElement('summary');
   summary.textContent='Choose permitted tools';
   details.appendChild(summary);
-  let selected=new Set(initial.includes('*')?currentToolNames:initial);
+  const initialWildcard=initial.includes('*');
+  let touched=false;
+  let selected=new Set(initialWildcard?currentToolNames:initial);
   const buttons=document.createElement('div');buttons.className='grant-actions';
   const grid=document.createElement('div');grid.className='grant-grid';
   const preview=document.createElement('div');preview.className='grant-preview';
   const inputs=[];
   const refresh=()=>{
     for(const input of inputs)input.checked=selected.has(input.value);
-    preview.textContent=compactTools([...selected])||'Select at least one tool';
+    preview.textContent=initialWildcard&&!touched
+      ?'Existing dynamic wildcard (*) unchanged. Editing the selection creates an explicit current-tool grant.'
+      :compactTools([...selected])||'Select at least one tool';
   };
   const add=(label,fn)=>{
     const button=document.createElement('button');button.type='button';
     button.className='secondary';button.textContent=label;
-    button.onclick=()=>{fn();refresh();};buttons.appendChild(button);
+    button.onclick=()=>{touched=true;fn();refresh();};buttons.appendChild(button);
   };
   add('Requested/granted only',()=>selected=new Set(initial.includes('*')?currentToolNames:initial));
   for(const [name,members] of Object.entries(ownerToolGroups))add('Add '+name,()=>members.forEach(t=>selected.add(t)));
@@ -640,11 +644,11 @@ function toolGrantEditor(initial){
   for(const name of currentToolNames){
     const input=document.createElement('input');input.type='checkbox';input.value=name;
     const label=document.createElement('label');label.append(input,document.createTextNode(name));
-    input.onchange=()=>{if(input.checked)selected.add(name);else selected.delete(name);refresh();};
+    input.onchange=()=>{touched=true;if(input.checked)selected.add(name);else selected.delete(name);refresh();};
     grid.append(label);inputs.push(input);
   }
   details.append(buttons,grid,preview);refresh();
-  return {details,get:()=>[...selected]};
+  return {details,get:()=>initialWildcard&&!touched?['*']:[...selected]};
 }
 async function loadAgentSessions(){
   const data=await api('/api/admin/agent-sessions');
@@ -886,8 +890,10 @@ async function loadAgentSessions(){
       revoke.onclick=()=>{
         if(!window.confirm('Revoke this Agent Session immediately?'))return;
         withOperation('Revoking Agent Session…',async()=>{
-          await api('/api/admin/agent-sessions/'+session.id+'/revoke',{method:'POST'});
-          await loadAgentSessions();show('Agent Session revoked.');
+          const result=await api('/api/admin/agent-sessions/'+session.id+'/revoke',{method:'POST'});
+          await loadAgentSessions();
+          show('Agent Session revoked. Best-effort cancellation requested for '
+            +(result.cancellation?.requestsSignalled??0)+' in-flight request(s).');
         });
       };
       actions.appendChild(revoke);

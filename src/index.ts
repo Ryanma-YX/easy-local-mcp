@@ -10,6 +10,7 @@ import { createServer } from './server.js';
 import { McpLoader } from './mcp/loader.js';
 import { loadSkills } from './skills/loader.js';
 import { ProcessManager } from './process.js';
+import { CommandRunner } from './command.js';
 import { secureWriteFile } from './security.js';
 import { isConcurrentReadRequest } from './relay-protocol.js';
 
@@ -315,6 +316,7 @@ async function main(){
   const mcp=new McpLoader(cfg.mcpServers);
   const skills=await loadSkills(cfg.skillsDir,cfg.enabledSkills);
   const processes=new ProcessManager();
+  const commands=new CommandRunner();
 
   let runtime={
     config:cfg,
@@ -381,7 +383,8 @@ async function main(){
       mcp,
       skills,
       processes,
-      ()=>runtime
+      ()=>runtime,
+      commands
     );
 
     await server.connect(new StdioServerTransport());
@@ -449,22 +452,30 @@ async function main(){
           remote={approved:req.headers['x-localmcp-session-approved']==='1'};
         }
       }
+      // Track disconnects BEFORE waiting in the mutation queue. Otherwise
+      // Revoke can close a queued request while nobody is listening, and its
+      // tool could still execute after an earlier mutation releases the gate.
+      const abortRequest=new AbortController();
+      const onResponseClose=()=>{if(!res.writableEnded)abortRequest.abort();};
+      res.once('close',onResponseClose);
+      if(res.destroyed&&!res.writableEnded)abortRequest.abort();
       let release=()=>{};
-
-      if(!requestCanRunDuringMutation(req.body)){
-        const previous=mutationGate;
-
-        mutationGate=new Promise<void>(resolveGate=>{
-          release=resolveGate;
-        });
-
-        await previous;
-      }
-
       let server:Awaited<ReturnType<typeof createServer>>|undefined;
       let transport:StreamableHTTPServerTransport|undefined;
 
       try{
+        if(!requestCanRunDuringMutation(req.body)){
+          const previous=mutationGate;
+
+          mutationGate=new Promise<void>(resolveGate=>{
+            release=resolveGate;
+          });
+
+          await previous;
+        }
+
+        // A queued request may have disconnected during `await previous`.
+        if(abortRequest.signal.aborted)throw new Error('Request cancelled');
         const active=runtime;
 
         server=await createServer(
@@ -473,7 +484,9 @@ async function main(){
           active.skills,
           processes,
           ()=>runtime,
-          remote
+          commands,
+          remote,
+          abortRequest.signal
         );
 
         transport=new StreamableHTTPServerTransport({
@@ -484,15 +497,24 @@ async function main(){
         await server.connect(transport);
         await transport.handleRequest(req,res,req.body);
       }catch{
-        if(!res.headersSent){
+        if(!res.headersSent&&!res.destroyed){
           res.status(500).json({
             error:'MCP request failed'
           });
         }
       }finally{
-        await transport?.close();
-        await server?.close();
-        release();
+        res.removeListener('close',onResponseClose);
+        try{
+          await transport?.close();
+        }finally{
+          try{
+            await server?.close();
+          }finally{
+            // Even a disconnect or failed transport cleanup must not strand
+            // later mutations behind this queue position.
+            release();
+          }
+        }
       }
     });
 
@@ -532,6 +554,7 @@ async function main(){
       await fn();
     }
 
+    await commands.close();
     await processes.close();
     await runtime.mcp.close();
     await Promise.allSettled([...retired]);

@@ -573,7 +573,8 @@ if(!localReady||closing){
     socket=ws;
 
     const assemblies=new Map<string,Assembly>();
-    const activeRequests=new Set<string>();
+    const activeRequests=new Map<string,AbortController>();
+    const preCancelled=new Set<string>();
     let pong=Date.now();
 
     const heartbeat=setInterval(()=>{
@@ -631,6 +632,16 @@ if(!localReady||closing){
         try{
           control=JSON.parse(message);
         }catch{}
+
+        // Cancellation commands originate from the authenticated Worker
+        // connection, never from model-controlled MCP tool arguments.
+        if(control?.type==='cancel'){
+          const id=typeof control.requestId==='string'?control.requestId:'';
+          const request=activeRequests.get(id);
+          if(request)request.abort();
+          else if(id)preCancelled.add(id);
+          return;
+        }
 
         if(control?.type==='control'){
           const requestId=
@@ -752,7 +763,12 @@ if(!localReady||closing){
         }
 
         JSON.parse(data.body);
-        activeRequests.add(frame.id);
+        if(preCancelled.delete(frame.id)){
+          respond(frame.id,{status:409,body:JSON.stringify({error:'Session work was revoked before it started'})});
+          return;
+        }
+        const controller=new AbortController();
+        activeRequests.set(frame.id,controller);
 
         try{
           const headers:Record<string,string>={
@@ -773,7 +789,7 @@ if(!localReady||closing){
               method:'POST',
               headers,
               body:data.body,
-              signal:AbortSignal.timeout(125000)
+              signal:AbortSignal.any([controller.signal,AbortSignal.timeout(125000)])
             }
           );
 
@@ -828,6 +844,8 @@ if(!localReady||closing){
     });
 
     ws.on('close',(code,reason)=>{
+      for(const controller of activeRequests.values())controller.abort();
+      preCancelled.clear();
       ready=false;
       clearInterval(heartbeat);
       const closeReason=reason.length?reason.toString():undefined;
