@@ -4,7 +4,7 @@ Every active assistant-created development head belongs under `copilot/feature/*
 
 ## 1. Agent Sessions: `copilot/feature/agent-sessions`
 
-Starts at `master`. Contains Agent Session request/approval, owner-selected duration, per-connector capacity, explicit UI tool-group snapshots, preserved dynamic backend wildcard `tools:["*"]`, owner Edit and repeatable Extend, and best-effort session-specific in-flight Revoke. It does not depend on Machine Lock work or staging.
+Starts at `master`. Contains Agent Session request/approval, owner-selected duration, per-connector capacity, explicit UI tool-group snapshots, preserved legacy approved wildcard records (no new wildcard grants) `tools:["*"]`, owner Edit and repeatable Extend, and best-effort session-specific in-flight Revoke. It does not depend on Machine Lock work or staging.
 
 ## 2. Machine Lock: `copilot/fix/*` and `copilot/feature/*`
 

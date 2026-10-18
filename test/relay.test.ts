@@ -1414,6 +1414,53 @@ test('Worker + Durable Object + local agent enforce registration protection, loc
   })).isError,undefined,'Scope denial must not invalidate other approved tools');
   assert.equal(await readFile(join(root,'still-approved.txt'),'utf8'),
     'allowed by independent session');
+
+  // An owner-approved Read preset remains read-only through Remote Lock.
+  const readRequest:any=await zoneClient.callTool({
+    name:'request_agent_session',arguments:{
+      scope:'devices',devices:[registered.deviceId],tools:['read']
+    }
+  });
+  assert.equal(readRequest.isError,undefined);
+  const readSession=JSON.parse(readRequest.content[0].text);
+  const readApprovalUrl=origin+'/api/admin/agent-sessions/'+readSession.sessionId+'/approve';
+  const rejectWildcard=await fetch(readApprovalUrl,{
+    method:'POST',headers:{Cookie:remoteAdminCookie,'Content-Type':'application/json'},
+    body:JSON.stringify({approvedHours:2,approvedTools:['*']})
+  });
+  assert.equal(rejectWildcard.status,400,'New owner approvals must reject wildcard grants');
+  assert.match(JSON.stringify(await rejectWildcard.json()),/unsupported/);
+  assert.equal((await fetch(readApprovalUrl,{
+    method:'POST',headers:{Cookie:remoteAdminCookie,'Content-Type':'application/json'},
+    body:JSON.stringify({approvedHours:2})
+  })).status,200);
+  const approvedRead:any=await (await fetch(origin+'/api/admin/agent-sessions',{
+    headers:{Cookie:remoteAdminCookie}
+  })).json();
+  const readRecord=approvedRead.sessions.find((session:any)=>session.id===readSession.sessionId);
+  assert.ok(readRecord.requestedTools.includes('read_file'));
+  assert.ok(readRecord.requestedTools.includes('list_directory'));
+  assert.equal(readRecord.requestedTools.includes('write_file'),false);
+  assert.equal(readRecord.tools.includes('*'),false);
+  const readResult:any=await zoneClient.callTool({
+    name:'read_file',arguments:{device:'Zone Worker',path:'still-approved.txt',
+      agentSessionToken:readSession.agentSessionToken}
+  });
+  assert.equal(readResult.isError,undefined,'Approved Read session works while Remote Locked');
+  assert.equal((await zoneClient.callTool({
+    name:'write_file',arguments:{device:'Zone Worker',path:'read-only-must-not-write.txt',
+      content:'denied',agentSessionToken:readSession.agentSessionToken}
+  })).isError,true,'Read preset never includes Write');
+  assert.equal((await zoneClient.callTool({
+    name:'read_file',arguments:{device:'Zone Worker',path:'still-approved.txt',
+      agentSessionToken:readSession.agentSessionToken}
+  })).isError,undefined,'Denied write must not invalidate the permitted Read session');
+  assert.equal((await fetch(
+    origin+'/api/admin/agent-sessions/'+readSession.sessionId+'/revoke',{
+      method:'POST',headers:{Cookie:remoteAdminCookie}
+    }
+  )).status,200);
+
   assert.equal((await fetch(remoteLockPath,{
     method:'POST',headers:{Cookie:remoteAdminCookie}
   })).status,200,'Remote Lock must be idempotent while already locked');
