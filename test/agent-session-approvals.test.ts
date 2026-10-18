@@ -84,21 +84,23 @@ test('request/approve/use/revoke isolates independent AI sessions within same Zo
   assert.equal(await approvedAgentSession(f.env,f.zone,one.agentSessionToken,f.deviceA,'run_command'),false);
 });
 
-test('entire-Zone grants include future members; idle and hard expiry are enforced',async()=>{
+test('entire-Zone scope includes future devices, but never future tools; expiry is enforced',async()=>{
   const f=fixture();
   const originalNow=Date.now;
   let now=Date.parse('2026-10-14T00:00:00Z');
   Date.now=()=>now;
   try{
-    const one=await f.request({scope:'zone/all',tools:['*']});
+    const one=await f.request({scope:'zone/all',tools:['all']});
     assert.equal((await f.call('approve',{id:one.sessionId,approvedHours:720,idleHours:48}))!.status,200);
     const addedLater='dd444444-4444-4444-8444-444444444444';
     assert.equal(await approvedAgentSession(f.env,f.zone,one.agentSessionToken,addedLater,'run_command'),true);
+    assert.equal(await approvedAgentSession(f.env,f.zone,one.agentSessionToken,addedLater,'future_tool_name'),false,
+      'New devices can be included by Zone scope, but later-added tools cannot expand the snapshot');
     now+=47*60*60_000;
     assert.equal(await approvedAgentSession(f.env,f.zone,one.agentSessionToken,f.deviceA,'read_file'),true);
     now+=49*60*60_000;
     assert.equal(await approvedAgentSession(f.env,f.zone,one.agentSessionToken,f.deviceA,'read_file'),false);
-    const second=await f.request({scope:'zone/all',tools:['*']});
+    const second=await f.request({scope:'zone/all',tools:['all']});
     assert.equal((await f.call('approve',{id:second.sessionId,approvedHours:720,idleHours:48}))!.status,200);
     for(let i=0;i<58;i++){
       now+=12*60*60_000;
@@ -147,6 +149,11 @@ test('request validates access scope and tools; owner chooses session duration',
   assert.equal(schemas.length,2);
   const schema:any=schemas[0].inputSchema;
   assert.deepEqual(schema.required,['scope']);
+  assert.equal(schema.properties.tools.items.enum.includes('all'),true);
+  assert.equal(schema.properties.tools.items.enum.includes('read'),true);
+  assert.equal(schema.properties.tools.items.enum.includes('*'),false);
+  assert.match(schema.properties.tools.description,/fixed snapshots/);
+  assert.match(schemas[0].description,/least-privilege/);
   assert.equal('durationHours' in schema.properties,false);
   assert.equal('idleHours' in schema.properties,false);
   const directSchema:any=agentSessionTools('device')[0].inputSchema;

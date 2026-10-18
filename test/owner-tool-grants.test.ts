@@ -21,9 +21,9 @@ function fixture(){
     handleAgentSessionStorage(store as any,request)})}};
   const connector={kind:'zone' as const,id:'aa111111-1111-4111-8111-111111111111',secret:'a'.repeat(64)};
   const device='bb222222-2222-4222-8222-222222222222';
-  const request=async(tools:string[])=>{
+  const request=async(tools?:string[])=>{
     const response=await handleAgentSessionTool(env,connector,'request_agent_session',
-      {scope:'devices',devices:[device],tools},11,[device]);
+      {scope:'devices',devices:[device],...(tools===undefined?{}:{tools})},11,[device]);
     const body:any=await response!.json();
     assert.equal(body.result.isError,undefined);
     return JSON.parse(body.result.content[0].text) as {sessionId:string;agentSessionToken:string};
@@ -35,7 +35,7 @@ function fixture(){
     }));
   const check=(token:string,tool:string)=>approvedAgentSession(env,connector,token,device,tool);
   const record=(id:string)=>store.items.get('agent-session:'+id) as AgentSessionRecord;
-  return {request,action,check,record};
+  return {request,action,check,record,store,env,connector,device};
 }
 
 test('owner may broaden requested read to read + edit + execute without broadening device scope',async()=>{
@@ -54,32 +54,32 @@ test('owner may broaden requested read to read + edit + execute without broadeni
   assert.equal(grant.scope,'devices');
 });
 
-test('owner can narrow broad requests; explicit backend wildcard remains a dynamic grant',async()=>{
+test('owner may narrow All snapshot; new wildcard approvals are rejected',async()=>{
   const f=fixture();
-  const session=await f.request(['*']);
+  const session=await f.request(['all']);
+  assert.deepEqual(f.record(session.sessionId).requestedTools,OWNER_GRANT_TOOLS);
   assert.equal((await f.action(session.sessionId,['read_file']))!.status,200);
-  assert.deepEqual(f.record(session.sessionId).requestedTools,['*']);
   assert.deepEqual(f.record(session.sessionId).tools,['read_file']);
   assert.equal(await f.check(session.agentSessionToken,'read_file'),true);
   assert.equal(await f.check(session.agentSessionToken,'run_command'),false);
   const broader=await f.request(['read_file']);
-  assert.equal((await f.action(broader.sessionId,['*']))!.status,200);
-  assert.deepEqual(f.record(broader.sessionId).tools,['*'],
-    'An explicit backend wildcard must remain an open-ended grant');
+  const invalid=(await f.action(broader.sessionId,['*']))!;
+  assert.equal(invalid.status,400);
+  assert.match((await invalid.json() as any).error,/unsupported/);
+  assert.equal(f.record(broader.sessionId).state,'pending');
+  assert.equal((await f.action(broader.sessionId,['read_file','run_command']))!.status,200);
   assert.equal(await f.check(broader.agentSessionToken,'run_command'),true);
-  assert.equal(await f.check(broader.agentSessionToken,'future_tool_name'),true,
-    'A backend wildcard must allow future enabled tools');
-  assert.deepEqual(f.record(broader.sessionId).requestedTools,['read_file']);
+  assert.equal(await f.check(broader.agentSessionToken,'future_tool_name'),false);
 });
 
-test('old owner API without approvedTools retains requested wildcard behavior',async()=>{
+test('older owner API omission grants only the request-time snapshot',async()=>{
   const f=fixture();
-  const session=await f.request(['*']);
+  const session=await f.request(['all']);
   assert.equal((await f.action(session.sessionId,undefined))!.status,200);
-  assert.deepEqual(f.record(session.sessionId).requestedTools,['*']);
-  assert.deepEqual(f.record(session.sessionId).tools,['*']);
+  assert.deepEqual(f.record(session.sessionId).requestedTools,OWNER_GRANT_TOOLS);
+  assert.deepEqual(f.record(session.sessionId).tools,OWNER_GRANT_TOOLS);
   assert.equal(await f.check(session.agentSessionToken,'run_command'),true);
-  assert.equal(await f.check(session.agentSessionToken,'future_tool_name'),true);
+  assert.equal(await f.check(session.agentSessionToken,'future_tool_name'),false);
 });
 
 test('previously approved wildcard grants keep true wildcard semantics',async()=>{
@@ -101,6 +101,95 @@ test('previously approved wildcard grants keep true wildcard semantics',async()=
     'A previous wildcard grant must not silently be downgraded or rewritten');
   assert.equal(f.record(session.sessionId).requestedTools,undefined,
     'Do not invent an original AI request for legacy sessions');
+  const ownerEdit=async(approvedTools:string[])=>handleAgentSessionStorage(
+    f.store as any,new Request('https://admin.internal/agent-sessions/edit',{
+      method:'POST',body:JSON.stringify({id:session.sessionId,approvedTools})
+    })
+  );
+  const denied=(await ownerEdit(['*']))!;
+  assert.equal(denied.status,400);
+  assert.match((await denied.json() as any).error,/unsupported/);
+  assert.equal(await f.check(session.agentSessionToken,'not_yet_shipped_tool'),true,
+    'Rejecting a new wildcard must not revoke an existing one');
+  assert.equal((await ownerEdit(['read_file']))!.status,200);
+  assert.equal(await f.check(session.agentSessionToken,'not_yet_shipped_tool'),false,
+    'Explicit owner edit replaces the legacy wildcard with a fixed grant');
+  assert.equal(await f.check(session.agentSessionToken,'read_file'),true);
+  assert.equal(f.record(session.sessionId).requestedTools,undefined);
+});
+
+test('omitted, All, Read and explicit request tools persist fixed snapshots',async()=>{
+  const f=fixture();
+  const omitted=await f.request();
+  const all=await f.request(['all']);
+  const read=await f.request(['read']);
+  const narrow=await f.request(['workspace_info','list_directory','read_file']);
+  for(const session of [omitted,all]){
+    assert.deepEqual(f.record(session.sessionId).requestedTools,OWNER_GRANT_TOOLS);
+    assert.deepEqual(f.record(session.sessionId).tools,OWNER_GRANT_TOOLS);
+  }
+  assert.deepEqual(f.record(read.sessionId).requestedTools,[...OWNER_TOOL_GROUPS.Read]);
+  assert.deepEqual(f.record(narrow.sessionId).requestedTools,
+    ['workspace_info','list_directory','read_file']);
+  assert.equal((await f.action(read.sessionId,undefined))!.status,200);
+  assert.equal(await f.check(read.agentSessionToken,'workspace_info'),true);
+  assert.equal(await f.check(read.agentSessionToken,'list_directory'),true);
+  assert.equal(await f.check(read.agentSessionToken,'read_file'),true);
+  for(const denied of ['write_file','delete_path','run_command',
+    'call_mcp_tool','future_read_tool']){
+    assert.equal(await f.check(read.agentSessionToken,denied),false,denied);
+  }
+  assert.equal((await f.action(omitted.sessionId,undefined))!.status,200);
+  assert.equal(await f.check(omitted.agentSessionToken,'run_command'),true);
+  assert.equal(await f.check(omitted.agentSessionToken,'future_tool_name'),false,
+    'New tools must not inherit authorization after approval');
+});
+
+test('new wildcard and mixed shorthand requests cannot reach storage',async()=>{
+  const f=fixture();
+  const invalid=[['*'],['*','read_file'],['all','read_file'],
+    ['read','write_file'],['all','all'],['read','read'],[],['Read'],['bogus']];
+  for(const tools of invalid){
+    const response=await handleAgentSessionTool(
+      f.env,f.connector,'request_agent_session',
+      {scope:'devices',devices:[f.device],tools},11,[f.device]
+    );
+    const rpc:any=await response!.json();
+    assert.equal(rpc.result.isError,true,JSON.stringify(tools));
+    if(tools.includes('*'))assert.match(rpc.result.content[0].text,/unsupported/);
+  }
+  assert.equal(f.store.items.size,0);
+  // The internal DO route also fails closed if a caller bypasses MCP validation.
+  const direct=await handleAgentSessionStorage(f.store as any,
+    new Request('https://admin.internal/agent-sessions/request',{
+      method:'POST',body:JSON.stringify({
+        id:crypto.randomUUID(),tokenHash:'a'.repeat(64),
+        connectorKind:'zone',connectorId:f.connector.id,connectorHash:'b'.repeat(64),
+        scope:'devices',devices:[f.device],tools:['*'],note:'legacy direct'
+      })
+    })
+  );
+  assert.equal(direct!.status,400);
+  assert.match(((await direct!.json()) as any).error,/unsupported/);
+  assert.equal(f.store.items.size,0);
+});
+
+test('pre-upgrade pending wildcard requires an explicit owner-selected grant',async()=>{
+  const f=fixture();
+  const pending=await f.request(['read_file']);
+  const old=f.record(pending.sessionId);
+  old.tools=['*'];
+  old.requestedTools=['*'];
+  const rejected=(await f.action(pending.sessionId,undefined))!;
+  assert.equal(rejected.status,400);
+  assert.match((await rejected.json() as any).error,/unsupported/);
+  assert.equal(old.state,'pending');
+  assert.deepEqual(old.tools,['*']);
+  assert.equal((await f.action(pending.sessionId,['read_file']))!.status,200);
+  assert.deepEqual(old.requestedTools,['*'],
+    'Do not rewrite historical original request when owner chooses explicit grant');
+  assert.deepEqual(old.tools,['read_file']);
+  assert.equal(await f.check(pending.agentSessionToken,'future_tool_name'),false);
 });
 
 test('default owner approval honors request and rejects unrecognized or unsafe tool sets',async()=>{
@@ -121,7 +210,9 @@ test('owner grants are from the same allowlist as MCP requests and grouped by ca
   for(const group of Object.values(OWNER_TOOL_GROUPS)){
     assert.equal(validAgentSessionTools([...group]),true);
   }
-  assert.equal(validAgentSessionTools(['*']),true);
+  assert.equal(validAgentSessionTools(['*']),false);
+  assert.equal(validAgentSessionTools(['all']),false);
+  assert.equal(validAgentSessionTools(['read']),false);
   assert.equal(validAgentSessionTools(['*','read_file']),false);
   const html=adminPage();
   assert.match(html,/Choose permitted tools/);
@@ -135,4 +226,7 @@ test('owner grants are from the same allowlist as MCP requests and grouped by ca
     'The UI must never submit a dynamic wildcard as its All shortcut');
   assert.match(html,/approvedTools/);
   assert.match(html,/MORE tools than the AI requested/);
+  assert.match(html,/Existing wildcard remains active/);
+  assert.match(html,/approvedTools\.includes\('\*'\)/,
+    'Unchanged legacy wildcard cannot be submitted as a new edited grant');
 });

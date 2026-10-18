@@ -607,7 +607,7 @@ $('rotateConnector').onclick=()=>{
 
 const currentToolNames=[...new Set(Object.values(ownerToolGroups).flat())];
 function compactTools(tools){
-  if(tools.includes('*'))return 'Dynamic wildcard (*) — future enabled tools included';
+  if(tools.includes('*'))return 'Legacy wildcard (*) — future enabled tools included';
   const remaining=new Set(tools);
   if(currentToolNames.length&&currentToolNames.every(t=>remaining.has(t))){
     return 'All current ('+currentToolNames.length+' tools)';
@@ -769,8 +769,8 @@ async function loadAgentSessions(){
       // Defaults remain exactly the AI request (least privilege).
       const originallyRequested=session.requestedTools||session.tools;
       const toolNames=[...new Set(Object.values(ownerToolGroups).flat())];
-      // Legacy MCP requests may ask for '*'; this now expands to a fixed
-      // list before approval. No UI operation submits an open-ended wildcard.
+      // Previously pending wildcard requests may still exist. The owner UI
+      // converts them to an explicit snapshot, never a new wildcard grant.
       const requestedSelection=()=>new Set(
         originallyRequested.includes('*')?toolNames:originallyRequested
       );
@@ -876,6 +876,10 @@ async function loadAgentSessions(){
       edit.textContent='Edit permissions';
       edit.onclick=()=>{
         const approvedTools=permissionEditor.get();
+        if(approvedTools.includes('*')){
+          show('Existing wildcard remains active. Change the tool selection to save an explicit current-tool grant.',true);
+          return;
+        }
         if(!approvedTools.length){show('Choose at least one tool',true);return;}
         withOperation('Editing Agent Session…',async()=>{
           await api('/api/admin/agent-sessions/'+session.id+'/edit',{
