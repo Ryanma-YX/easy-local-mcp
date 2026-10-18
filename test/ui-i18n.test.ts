@@ -32,6 +32,16 @@ test('UI i18n dictionaries keep English and Chinese keys aligned',()=>{
   }
 });
 
+test('Relay Admin uses concise localized Remote Lock and Unlock labels',()=>{
+  const {en}=UI_DICTIONARIES.admin;
+  const zh=UI_DICTIONARIES.admin['zh-CN'];
+
+  assert.equal(en.remoteLock,'Remote Lock');
+  assert.equal(en.remoteUnlock,'Remote Unlock');
+  assert.equal(zh.remoteLock,'远程锁定');
+  assert.equal(zh.remoteUnlock,'远程解锁');
+});
+
 test('UI i18n browser bootstrap is syntactically valid for every scope',()=>{
   for(const scope of Object.keys(UI_DICTIONARIES) as UiScope[]){
     const script=uiI18nClient(scope);

@@ -14,5 +14,7 @@ test('Relay Admin owner session UI has valid client-side JavaScript and three ac
   assert.match(html,/Group approvals cover the tools in that group today/);
   assert.match(html,/initialWildcard&&!touched/,
     'unmodified legacy dynamic wildcard must not silently become current snapshot');
-  assert.match(html,/Remote Unlock \(fixed deadline\)/);
+  assert.match(html,/remoteUnlock\.textContent=window\.uiT\('remoteUnlock'\);/);
+  assert.match(html,/remoteLock\.textContent=window\.uiT\('remoteLock'\);/);
+  assert.doesNotMatch(html,/Remote Unlock \(fixed deadline\)/);
 });
