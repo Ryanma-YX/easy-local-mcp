@@ -32,6 +32,10 @@ const uuid=(value:unknown)=>typeof value==='string'
   && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const hash=(value:unknown)=>typeof value==='string'&&/^[0-9a-f]{64}$/.test(value);
 const key=(id:string)=>`agent-session:${id}`;
+const wildcardRequested=(value:unknown)=>Array.isArray(value)&&value.includes('*');
+const wildcardUnsupported=()=>json({
+  error:'Dynamic wildcard (*) is unsupported for new session requests, approvals and edits. Select explicit current tool names; existing approved wildcard sessions remain unchanged.'
+},400);
 // A Zone MCP connector has one shared quota for all clients holding its URL;
 // a direct device connector has its own quota. Model conversation identity
 // cannot be authenticated from a shared bearer, so do not claim per-AI quotas.
@@ -49,9 +53,8 @@ export function effectiveState(record:AgentSessionRecord){
 }
 function publicRecord(record:AgentSessionRecord){
   const {tokenHash,connectorHash,...rest}=record;
-  // Preserve exact owner-approved permission representation, including a
-  // deliberately granted '*' wildcard. The UI All shortcut sends explicit
-  // names, but a wildcard is still a supported backend authorization value.
+  // Preserve existing approved wildcard records exactly. New requests and
+  // owner changes save only explicit snapshots of currently known tool names.
   return {...rest,state:effectiveState(record)};
 }
 function sameConnector(record:AgentSessionRecord,body:Record<string,unknown>){
@@ -89,6 +92,7 @@ export async function handleAgentSessionStorage(
   if(action==='request'){
     const {id,tokenHash,connectorKind,connectorId,connectorHash,
       scope,devices,tools,note}=body;
+    if(wildcardRequested(tools))return wildcardUnsupported();
     if(!uuid(id)||!hash(tokenHash)||!hash(connectorHash)
       || !['device','zone'].includes(String(connectorKind))
       || !uuid(connectorId)&&!(connectorKind==='device'&&connectorId==='local')
@@ -233,6 +237,7 @@ export async function handleAgentSessionStorage(
         return json({error:'Only active approved sessions may be changed'},409);
       }
       if(action==='edit'){
+        if(wildcardRequested(body.approvedTools))return wildcardUnsupported();
         if(!validAgentSessionTools(body.approvedTools)){
           return json({error:'Invalid owner-selected tool grant'},400);
         }
@@ -282,9 +287,10 @@ export async function handleAgentSessionStorage(
       }
       // Owner may intentionally broaden or narrow tool access. This path is
       // available ONLY behind Relay Admin authentication, never over MCP.
-      // Scope and device coverage do not change. Old clients/approvals remain
-      // compatible when approvedTools is omitted.
+      // Omitted approvedTools selects the original explicit snapshot.
+      // Previously pending wildcard records cannot create new dynamic grants.
       const approvedTools=body.approvedTools===undefined?record.tools:body.approvedTools;
+      if(wildcardRequested(approvedTools))return wildcardUnsupported();
       if(!validAgentSessionTools(approvedTools)){
         return json({error:'Invalid owner-selected tool grant'},400);
       }

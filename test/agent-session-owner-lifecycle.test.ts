@@ -31,8 +31,9 @@ test('Edit changes only owner tools, not token, original request or device scope
   for(const invalid of [[],['read_file','read_file'],['*','read_file'],['unknown']]){
     assert.equal((await f.call('edit',{approvedTools:invalid}))!.status,400);
   }
-  assert.equal((await f.call('edit',{approvedTools:['*']}))!.status,200);
-  assert.deepEqual(f.record().tools,['*'],'intentional backend wildcard remains supported');
+  assert.equal((await f.call('edit',{approvedTools:['*']}))!.status,400);
+  assert.deepEqual(f.record().tools,['read_file','edit_file'],
+    'Attempting a new wildcard edit must leave the existing grant intact');
 });
 test('Extend replaces deadline relative to now, can repeat, resets idle, does not revive revoked/expired',async()=>{
   const f=fixture();

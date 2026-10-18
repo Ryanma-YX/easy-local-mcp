@@ -1,4 +1,4 @@
-import { OWNER_GRANT_TOOLS, validAgentSessionTools } from './agent-session-tool-groups';
+import { OWNER_GRANT_TOOLS, normalizeRequestedAgentSessionTools } from './agent-session-tool-groups';
 // MCP-facing Agent Session Approvals. Connector URL auth is independent of the
 // per-AI session grant. No OAuth, refresh token, or model-hidden credential.
 export interface SessionConnector {
@@ -67,8 +67,8 @@ export function withSessionArgument(tool:Record<string,unknown>){
 }
 export function agentSessionTools(kind:'zone'|'device'){
   const requestProps:Record<string,unknown>={
-    tools:{type:'array',items:{type:'string'},minItems:1,maxItems:OWNER_GRANT_TOOLS.length,
-      description:'MCP tool names to request, or ["*"] to request all enabled tools. The owner UI chooses explicit currently visible tools at approval time; backend wildcard grants remain supported separately.'},
+    tools:{type:'array',items:{type:'string',enum:[...OWNER_GRANT_TOOLS,'all','read']},minItems:1,maxItems:OWNER_GRANT_TOOLS.length,
+      description:'Request only the tools needed. Use exact tool names, e.g. ["read_file"] for a known path or ["workspace_info","list_directory","read_file"] when exploring. ["read"] requests only the current Read group; ["all"] or omitted tools requests all current tool names. Presets are fixed snapshots; later-added tools are excluded. ["*"] is unsupported.'},
     note:{type:'string',maxLength:160,description:'Brief purpose shown to the owner.'}
   };
   if(kind==='zone'){
@@ -77,7 +77,7 @@ export function agentSessionTools(kind:'zone'|'device'){
   }
   return [{
     name:SESSION_REQUEST_TOOL,
-    description:'Request owner approval for selected tools and devices. The owner alone chooses the access duration (up to 30 days) and inactivity limit in Relay Admin. The returned token is NOT authorized until then.',
+    description:'Request owner approval for a coherent least-privilege set of tools needed for the task and chosen devices. For exploration consider workspace_info, list_directory, find_files and read_file; prefer an exact narrow list when possible. A Read-only preset is available. The owner chooses the duration (up to 30 days) and inactivity limit. The returned token is NOT authorized until approved.',
     inputSchema:{type:'object',properties:requestProps,required:kind==='zone'?['scope']:[],additionalProperties:false}
   },{
     name:SESSION_STATUS_TOOL,
@@ -107,7 +107,10 @@ export async function handleAgentSessionTool(
 
   const scope=connector.kind==='device'?'device':args.scope;
   const deviceIds=scope==='devices'?args.devices:[];
-  const tools=args.tools??['*'];
+  if(Array.isArray(args.tools)&&args.tools.includes('*')){
+    return toolError(rpcId,'tools:["*"] is unsupported for new Agent Sessions. Use tools:["all"] for a fixed snapshot of current tools, tools:["read"] for current Read tools, or an explicit list. Existing approved wildcard sessions remain unchanged.');
+  }
+  const tools=normalizeRequestedAgentSessionTools(args.tools);
   const note=args.note??'';
   // Old clients may send legacy duration fields until they refresh tools.
   // They are deliberately ignored: only the independently authenticated
@@ -120,7 +123,7 @@ export async function handleAgentSessionTool(
     || (scope!=='devices'&&deviceIds.length!==0)
     || deviceIds.some(id=>!uuid(id)||!currentDevices.includes(id))
     || new Set(deviceIds).size!==deviceIds.length
-    || !validAgentSessionTools(tools)
+    || tools===null
     || typeof note!=='string'||note.length>160){
     return toolError(rpcId,'Invalid access scope, tools or purpose');
   }

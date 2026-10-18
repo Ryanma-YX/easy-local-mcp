@@ -1,7 +1,7 @@
-// Single source of truth for request validation and owner-only tool presets.
-// UI All/group controls expand to explicit tool names at approval time.
-// The backend separately supports '*' as a deliberately open-ended grant
-// for all current and future enabled tools (independent of that UI shortcut).
+// Single source of truth for request snapshots and owner-selected tool grants.
+// All and Read request presets are expanded to explicit currently known names
+// before storage. Existing approved '*' sessions remain valid, but new
+// wildcard requests, approvals and edits are intentionally unsupported.
 export const OWNER_TOOL_GROUPS={
   Read:[
     'workspace_info','list_workspaces','list_directory','workspace_tree',
@@ -27,11 +27,22 @@ export const OWNER_GRANT_TOOLS=[...new Set(
   Object.values(OWNER_TOOL_GROUPS).flat()
 )];
 const known=new Set<string>(OWNER_GRANT_TOOLS);
+// Only explicit current tool names can be newly stored as a grant.
 export function validAgentSessionTools(value:unknown):value is string[]{
   return Array.isArray(value)
     && value.length>=1
     && value.length<=OWNER_GRANT_TOOLS.length
-    && value.every(item=>typeof item==='string'&&(item==='*'||known.has(item)))
-    && !(value.includes('*')&&value.length!==1)
+    && value.every(item=>typeof item==='string'&&known.has(item))
     && new Set(value).size===value.length;
+}
+
+// Presets never survive into storage: even when tools is omitted, approval
+// grants exactly the tool names captured when the request was received.
+export function normalizeRequestedAgentSessionTools(value:unknown):string[]|null{
+  if(value===undefined)return [...OWNER_GRANT_TOOLS];
+  if(Array.isArray(value)&&value.length===1){
+    if(value[0]==='all')return [...OWNER_GRANT_TOOLS];
+    if(value[0]==='read')return [...OWNER_TOOL_GROUPS.Read];
+  }
+  return validAgentSessionTools(value)?[...value]:null;
 }
