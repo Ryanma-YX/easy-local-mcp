@@ -439,7 +439,7 @@ async function openZone(zoneId){
 
     const remoteUnlock=document.createElement('button');
     remoteUnlock.className='secondary';
-    remoteUnlock.textContent='Remote Unlock (fixed deadline)';
+    remoteUnlock.textContent=window.uiT('remoteUnlock');
     remoteUnlock.disabled=!device.online;
     remoteUnlock.onclick=()=>withOperation(
       window.uiT('remoteUnlocking',{name:device.name}),
